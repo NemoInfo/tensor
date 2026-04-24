@@ -13,13 +13,13 @@ println :: inline (s: string, args: ..Any) {
 }
 
 dbg :: (a: Code, loc := #caller_location) #expand {
-    #import "Compiler";
     val := #insert a;
     str :: #run print_code(a); 
     print("[%:%:%] % = %\n", loc.fully_pathed_filename, loc.line_number, loc.character_number, str, val);
 }
 
 print_code :: (a: Code) -> string #compile_time {
+  #import "Compiler";
   #import "Program_Print";
   root, expr :=  compiler_get_nodes(a);
   sb: String_Builder;

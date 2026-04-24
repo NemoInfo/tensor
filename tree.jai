@@ -11,8 +11,6 @@ OpKind :: enum {
   COT;
 }
 
-Leaf :: struct($T: Type) { tensor: *Tensor(T); }
-
 Op1 :: struct($K: OpKind, $T: Type, $C: Type) {
   arg: C;
 }
@@ -66,7 +64,7 @@ get_dtype :: (S: Type) -> Type #compile_time {
   if ti.type != .STRUCT return S;
   tis := cast(*Type_Info_Struct) ti;
   if tis.name == {
-    case "Leaf"; #through;
+    case "Tensor"; #through;
     case "Op1";  #through;
     case "Op2";
     for tis.specified_parameters {
@@ -79,7 +77,7 @@ get_dtype :: (S: Type) -> Type #compile_time {
 
 eval_it :: inline (val: $T, nd_index: []s64) -> T #modify { return T == get_dtype(T); } { return val; }
 
-eval_it :: inline (using leaf: Leaf($T), nd_index: []s64) -> T {
+eval_it :: inline (tensor: Tensor($T), nd_index: []s64) -> T {
   flat := 0;
   offset := nd_index.count - tensor.ndim;
   for 0..tensor.ndim-1 {
@@ -129,7 +127,7 @@ shape_of :: (expr: Op2($K, $T, $L, $R)) -> []s64 {
   return broadcast_shape(shape_of(expr.lhs), shape_of(expr.rhs));
 }
 shape_of :: (expr: Op1($K, $T, $C))     -> []s64 { return shape_of(expr.arg); }
-shape_of :: (using leaf: Leaf($T))      -> []s64 { return tensor.shape; }
+shape_of :: (tensor: Tensor($T))      -> []s64 { return tensor.shape; }
 shape_of :: (expr: $T) -> []s64 #modify {
   if T == get_dtype(T) return true;
   return false;

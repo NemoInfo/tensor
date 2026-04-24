@@ -1,4 +1,4 @@
-Tensor :: struct (T: Type) {
+RawTensor :: struct (T: Type) {
   data:      []T;
   #overlay (data.count) count: s64;
   shape:     []s64;
@@ -7,6 +7,8 @@ Tensor :: struct (T: Type) {
   flags:     TensorFlags;
   allocator: Allocator;
 }
+
+Tensor :: struct($T: Type) { using tensor: *RawTensor(T); }
 
 TensorFlags :: enum_flags u8 {
   CONTIGUOUS;
@@ -27,9 +29,9 @@ count :: inline (shape: []s64) -> s64 {
   return n;
 }
 
-tensor :: (shape: []s64, $T: Type, allocator : Allocator = context.allocator) -> Tensor(T) {
+raw_tensor :: (shape: []s64, $T: Type, allocator : Allocator = context.allocator) -> RawTensor(T) {
   push_allocator(allocator);
-  t: Tensor(T);
+  t: RawTensor(T);
   t.shape     = array_copy(shape);
   t.stride    = compute_strides(shape);
   t.allocator = allocator;
@@ -38,11 +40,19 @@ tensor :: (shape: []s64, $T: Type, allocator : Allocator = context.allocator) ->
   return t;
 }
 
-tensor_free :: (t: *Tensor($T)) {
+tensor :: (shape: []s64, $T: Type, allocator : Allocator = context.allocator) -> Tensor(T) {
+  res := New(RawTensor(T),,allocator);
+  res.* = raw_tensor(shape, T, allocator);
+  return .{ res };
+}
+
+tensor_free :: (t: *RawTensor($T)) {
   if t.flags & .OWNED array_free(t.data);
   array_free(t.shape);
   array_free(t.stride);
 }
+
+tensor_free :: (t: Tensor($T)) { tensor_free(t.tensor); }
 
 element :: (el: $T, shape: []s64, allocator : Allocator = context.allocator) -> Tensor(T) {
   res := tensor(shape, T, allocator);
@@ -66,7 +76,7 @@ range :: (shape: []s64, $T: Type = f32, allocator : Allocator = context.allocato
   return res;
 }
 
-shape_eq :: (a: Tensor($T), b: Tensor(T)) -> bool {
+shape_eq :: (a: RawTensor($T), b: RawTensor(T)) -> bool {
   if a.ndim != b.ndim return false;
   for a.shape if it != b.shape[it_index] return false;
   return true;
@@ -80,15 +90,16 @@ shape_eq :: (a: []s64, b: []s64) -> bool {
 
 
 main :: () {
-  a := Leaf(f32).{ *range(.[1,4], f32) };
-  b := Leaf(f32).{ *element(2., .[4,1]) };
-  thing := pow(a, b) - 1.; 
+  a := range(.[1,4], f32); defer tensor_free(a);
+  b := range(.[4,1], f32); defer tensor_free(b);
+  thing := a + b - 1.; 
   #run dbg(type_of(thing));
   res := compute(thing);
   tensor_print(res);
 }
 
-tensor_print :: (a: Tensor($T)) {
+tensor_print :: (a: Tensor($T)) { tensor_print(a.tensor); }
+tensor_print :: (a: RawTensor($T)) {
   push_allocator(Default_Allocator.allocator);
   if a.ndim == 0  { print("%\n", a.data[0]); return; }
 
