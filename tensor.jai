@@ -88,15 +88,7 @@ shape_eq :: (a: []s64, b: []s64) -> bool {
   return true;
 }
 
-
-main :: () {
-  a := range(.[1,4], f32); defer tensor_free(a);
-  b := range(.[4,1], f32); defer tensor_free(b);
-  thing := a + b - 1.; 
-  #run dbg(type_of(thing));
-  res := compute(thing);
-  tensor_print(res);
-}
+main :: () { benchmark_simd(); }
 
 tensor_print :: (a: Tensor($T)) { tensor_print(a.tensor); }
 tensor_print :: (a: RawTensor($T)) {
@@ -138,5 +130,7 @@ tensor_print :: (a: RawTensor($T)) {
 #import "Basic";
 #load "tree.jai";
 #load "util.jai";
+#load "simd.jai";
+#load "benchmark.jai";
 Default_Allocator :: #import "Default_Allocator";
 Sloppy_Math       :: #import "Sloppy_Math";

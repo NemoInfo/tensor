@@ -128,24 +128,80 @@ shape_of :: (expr: Op2($K, $T, $L, $R)) -> []s64 {
 }
 shape_of :: (expr: Op1($K, $T, $C))     -> []s64 { return shape_of(expr.arg); }
 shape_of :: (tensor: Tensor($T))      -> []s64 { return tensor.shape; }
-shape_of :: (expr: $T) -> []s64 #modify {
-  if T == get_dtype(T) return true;
-  return false;
-} { return .[]; }
+shape_of :: (expr: $T) -> []s64 #modify { return T == get_dtype(T); } { return .[]; }
 
-compute :: inline (expr: $E) -> Tensor($T) #modify {
+is_broadcasting :: (expr: $E, output_shape: []s64) -> bool #modify { return E == get_dtype(E); } {
+  return !shape_eq(shape_of(expr), output_shape);
+}
+
+is_broadcasting :: (t: Tensor($T), output_shape: []s64) -> bool {
+  return !shape_eq(t.shape, output_shape);
+}
+
+is_broadcasting :: (expr: Op1($K, $T, $C), output_shape: []s64) -> bool {
+  return is_broadcasting(expr.arg, output_shape);
+}
+
+is_broadcasting :: (expr: Op2($K, $T, $L, $R), output_shape: []s64) -> bool {
+  return is_broadcasting(expr.lhs, output_shape) || 
+         is_broadcasting(expr.rhs, output_shape);
+}
+
+compute :: inline (expr: $E, simd : bool = false) -> Tensor($T) #modify {
   T = get_dtype(E);
   return true;
 } {
-  ret      := tensor(shape_of(expr), T);
-  nd_index := NewArray(ret.ndim, s64,, temp);
-  for 0..ret.count-1 {
-    tmp := it;
-    for < 0..ret.ndim-1 {
-      nd_index[it] = tmp % ret.shape[it];
-      tmp /= ret.shape[it];
+  shape := shape_of(expr);
+  ret   := tensor(shape, T);
+
+  if is_broadcasting(expr, shape) {
+    nd_index := NewArray(ret.ndim, s64,, temp);
+    for 0..ret.count-1 {
+      tmp := it;
+      for < 0..ret.ndim-1 {
+        nd_index[it] = tmp % ret.shape[it];
+        tmp /= ret.shape[it];
+      }
+      ret.data[it] = eval_it(expr, nd_index);
     }
-    ret.data[it] = eval_it(expr, nd_index);
+  } else if simd {
+    i := 0; simd_count := ret.count / 8;
+    while i < simd_count {
+      for i..i+7 ret.data[it] = eval_it(expr, it);
+      i += 8;
+    }
+    for i..ret.count-1 ret.data[it] = eval_it(expr, it);
+  } else {
+    for 0..ret.count-1 ret.data[it] = eval_it(expr, it);
   }
+
   return ret;
+}
+
+eval_it :: inline (t: Tensor($T), i: s64) -> T { 
+  return t.data[i]; 
+}
+eval_it :: inline (val: $T, i: s64) -> T #modify { 
+  return T == get_dtype(T); 
+} { return val; }
+eval_it :: inline (expr: Op1($K, $T, $C), i: s64) -> T {
+  c := eval_it(expr.arg, i);
+  #if K == {
+    case .SUB; return -c;
+    case .SIN; return sin(c);
+    case .COS; return cos(c);
+    case .TAN; return tan(c);
+    case .COT; return cot(c);
+  }
+}
+eval_it :: inline (expr: Op2($K, $T, $L, $R), i: s64) -> T {
+  l := eval_it(expr.lhs, i);
+  r := eval_it(expr.rhs, i);
+  #if K == {
+    case .ADD; return l + r;
+    case .SUB; return l - r;
+    case .MUL; return l * r;
+    case .DIV; return l / r;
+    case .POW; return pow(l, r);
+  }
 }
