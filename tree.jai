@@ -15,7 +15,7 @@ Op1 :: struct($K: OpKind, $T: Type, $C: Type) {
   arg: C;
 }
 
-Op2 :: struct($K: OpKind, $T: Type, $L: Type, $R: Type) {
+Op2 :: struct($K: OpKind, $T: Type, $L: Type, $R: Type, $Cost: s64) {
   lhs: L;
   rhs: R;
 }
@@ -35,11 +35,14 @@ OP1 :: #string,\% JAI
 JAI
 
 OP2 :: #string,\% JAI
-%1 :: (l: $L, r: $R) -> Op2(.%2, $T, L, R) #modify {
+%1 :: (l: $L, r: $R) -> $RET #modify {
   l_dtype := get_dtype(L);
   r_dtype := get_dtype(R);
+  l_cost := get_cost(L);
+  r_cost := get_cost(R);
+  cost := ifx l_cost == r_cost then l_cost + 1 else max(l_cost, r_cost);
   if l_dtype != r_dtype return false, tprint("lhs dtype != rhs dtype mismatch \% != \%", l_dtype, r_dtype);
-  T = l_dtype;
+  RET = #dynamic_specialize Op2(K = .%2, T = l_dtype, L = L, R = R, Cost = cost);
   return true; 
 } { return .{l, r}; }
 JAI
@@ -75,6 +78,22 @@ get_dtype :: (S: Type) -> Type #compile_time {
   return S;
 }
 
+get_cost :: (S: Type) -> s64 #compile_time {
+  ti := cast(*Type_Info) S;
+  if ti.type != .STRUCT return -1;
+  tis := cast(*Type_Info_Struct) ti;
+  if tis.name == {
+    case "Tensor"; return 1;
+    case "Op1";    panic("Not implemented");
+    case "Op2";
+    for tis.specified_parameters {
+      if it.name != "Cost" continue;
+      return (cast(*s64) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
+    }
+  }
+  return -1;
+}
+
 eval_it :: inline (val: $T, nd_index: []s64) -> T #modify { return T == get_dtype(T); } { return val; }
 
 eval_it :: inline (tensor: Tensor($T), nd_index: []s64) -> T {
@@ -99,7 +118,7 @@ eval_it :: inline (expr: Op1($K, $T, $C), nd_index: []s64) -> T {
   }
 }
 
-eval_it :: inline (expr: Op2($K, $T, $L, $R), nd_index: []s64) -> T {
+eval_it :: inline (expr: Op2($K, $T, $L, $R, $Cost), nd_index: []s64) -> T {
   l := eval_it(expr.lhs, nd_index);
   r := eval_it(expr.rhs, nd_index);
   #if K == {
@@ -123,7 +142,7 @@ broadcast_shape :: (a: []s64, b: []s64) -> []s64 {
   return result;
 }
 
-shape_of :: (expr: Op2($K, $T, $L, $R)) -> []s64 {
+shape_of :: (expr: Op2($K, $T, $L, $R, $Cost)) -> []s64 {
   return broadcast_shape(shape_of(expr.lhs), shape_of(expr.rhs));
 }
 shape_of :: (expr: Op1($K, $T, $C))     -> []s64 { return shape_of(expr.arg); }
@@ -142,41 +161,57 @@ is_broadcasting :: (expr: Op1($K, $T, $C), output_shape: []s64) -> bool {
   return is_broadcasting(expr.arg, output_shape);
 }
 
-is_broadcasting :: (expr: Op2($K, $T, $L, $R), output_shape: []s64) -> bool {
+is_broadcasting :: (expr: Op2($K, $T, $L, $R, $Cost), output_shape: []s64) -> bool {
   return is_broadcasting(expr.lhs, output_shape) || 
          is_broadcasting(expr.rhs, output_shape);
 }
 
-compute :: inline (expr: $E, simd : bool = false) -> Tensor($T) #modify {
+compute :: inline (expr: $E, simd: bool = false) -> Tensor($T) #modify {
   T = get_dtype(E);
   return true;
 } {
   shape := shape_of(expr);
   ret   := tensor(shape, T);
 
+  compute(expr, *ret,simd);
+
+  return ret;
+}
+
+compute :: inline (expr: $E, ret: *Tensor($T), simd: bool = false) #modify {
+  T = get_dtype(E);
+  return true;
+} {
+  shape := shape_of(expr);
+  assert(shape_eq(shape, ret.shape));
+
   if is_broadcasting(expr, shape) {
     nd_index := NewArray(ret.ndim, s64,, temp);
-    for 0..ret.count-1 {
+    for 0..ret.count - 1 {
       tmp := it;
-      for < 0..ret.ndim-1 {
+      for < 0..ret.ndim - 1 {
         nd_index[it] = tmp % ret.shape[it];
         tmp /= ret.shape[it];
       }
       ret.data[it] = eval_it(expr, nd_index);
     }
   } else if simd {
-    i := 0; simd_count := ret.count / 8;
-    while i < simd_count {
-      for i..i+7 ret.data[it] = eval_it(expr, it);
-      i += 8;
-    }
-    for i..ret.count-1 ret.data[it] = eval_it(expr, it);
-  } else {
-    for 0..ret.count-1 ret.data[it] = eval_it(expr, it);
-  }
+    simd_n := ret.count & ~(cast(s64) 7);
 
-  return ret;
+    #asm AVX { out: vec; }
+    for 0..simd_n / 8 - 1 {
+      i := it * size_of(T);
+      eval_it_simd(expr, out, it);
+      ptr : *T = ret.data.data;
+      #asm AVX { movups [ptr + i * 8], out; }
+    }
+
+    for simd_n..ret.count - 1 ret.data[it] = eval_it(expr, it);
+  } else {
+    for 0..ret.count - 1 ret.data[it] = eval_it(expr, it);
+  }
 }
+
 
 eval_it :: inline (t: Tensor($T), i: s64) -> T { 
   return t.data[i]; 
@@ -194,7 +229,7 @@ eval_it :: inline (expr: Op1($K, $T, $C), i: s64) -> T {
     case .COT; return cot(c);
   }
 }
-eval_it :: inline (expr: Op2($K, $T, $L, $R), i: s64) -> T {
+eval_it :: inline (expr: Op2($K, $T, $L, $R, $Cost), i: s64) -> T {
   l := eval_it(expr.lhs, i);
   r := eval_it(expr.rhs, i);
   #if K == {

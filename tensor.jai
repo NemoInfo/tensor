@@ -1,6 +1,7 @@
 RawTensor :: struct (T: Type) {
   data:      []T;
   #overlay (data.count) count: s64;
+  #overlay (data.data)  ptr: *T;
   shape:     []s64;
   stride:    []s64;
   #overlay (shape.count) ndim: s64;
@@ -8,7 +9,7 @@ RawTensor :: struct (T: Type) {
   allocator: Allocator;
 }
 
-Tensor :: struct($T: Type) { using tensor: *RawTensor(T); }
+Tensor :: struct($T: Type) { using tensor: *RawTensor(T);}
 
 TensorFlags :: enum_flags u8 {
   CONTIGUOUS;
@@ -88,7 +89,7 @@ shape_eq :: (a: []s64, b: []s64) -> bool {
   return true;
 }
 
-main :: () { benchmark_simd(); }
+main :: () { test(); benchmark_simd(); }
 
 tensor_print :: (a: Tensor($T)) { tensor_print(a.tensor); }
 tensor_print :: (a: RawTensor($T)) {
