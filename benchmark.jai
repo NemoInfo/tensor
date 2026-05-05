@@ -38,7 +38,8 @@ benchmark_simd :: () {
   {
     start := current_time_monotonic();
     ret   := tensor(shape_of(a * b + c), f32); defer tensor_free(ret);
-    for 1..I compute(a * b - c, *ret);
+    expr := ((a*(c + b) + a*b) * (a*b + a*b)) * ((a*b + a*b) * (c*a + a*b));
+    for 1..I compute(expr, *ret);
     fused_time = to_float64_seconds(current_time_monotonic() - start);
   }
   print("fused: % Melem/s\n", total / fused_time  / 1_000_000);
@@ -56,7 +57,9 @@ benchmark_simd :: () {
   {
     start := current_time_monotonic();
     ret   := tensor(shape_of(a * b + c), f32); defer tensor_free(ret);
-    for 1..I compute(a * b + c, *ret, simd = true);
+    expr  := ((a*(c + b) + a*b) * (a*b + a*b)) * ((a*b + a*b) * (c*a + a*b));
+
+    for 1..I compute_simd(expr, *ret);
   
     simd = to_float64_seconds(current_time_monotonic() - start);
   }
@@ -73,20 +76,20 @@ benchmark_function :: (fn: Code) #expand {
 }
 
 simd_muladd_avx :: (a: *f32, b: *f32, c: *f32, res: *f32, n: s64) {
-    simd_n := n & ~(cast(s64) 7);
+  simd_n := n & ~(cast(s64) 7);
 
-    for 0..simd_n / 8 - 1 {
-      #asm AVX {
-        va: vec;
-        movups va,     [a + it * 8];
-        mulps  va, va, [b + it * 8];
-        addps  va, va, [c + it * 8];
-        movups [res + it * 8], va;
-      }
+  for 0..simd_n / 8 - 1 {
+    #asm AVX {
+      va: vec;
+      movups va,     [a + it * 8];
+      mulps  va, va, [b + it * 8];
+      addps  va, va, [c + it * 8];
+      movups [res + it * 8], va;
     }
+  }
 
-    for simd_n..n - 1
-        res[it] = a[it] * b[it] + c[it];
+  for simd_n..n - 1
+  res[it] = a[it] * b[it] + c[it];
 }
 
 test :: () {
@@ -94,8 +97,10 @@ test :: () {
   a := range(.[N, N], f32); defer tensor_free(a);
   b := ones(.[N, N], f32);  defer tensor_free(b);
   c := ones(.[N, N], f32);  defer tensor_free(c);
-  // res := ((a*(c + b) + a*b) * (a*b + a*b)) * ((a*b + a*b) * (c*a + a*b));
-  res := a * b + c;
-  #run dbg(type_of(res));
-  // tensor_print(compute(res, simd = true));
+  expr := a * b + c; #run dbg(type_of(expr));
+  ret := tensor(shape_of(a * b + c), f32); defer tensor_free(ret);
+  compute_simd(expr, *ret);
+  tensor_print(ret);
 }
+
+// res := ((a*(c + b) + a*b) * (a*b + a*b)) * ((a*b + a*b) * (c*a + a*b));

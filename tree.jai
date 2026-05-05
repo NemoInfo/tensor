@@ -212,6 +212,24 @@ compute :: inline (expr: $E, ret: *Tensor($T), simd: bool = false) #modify {
   }
 }
 
+compute_simd :: inline (expr: $E, ret: *Tensor($T)) #modify {
+  T = get_dtype(E);
+  return true;
+} {
+  simd_n := ret.count & ~(cast(s64) 7);
+  ptr : *T = ret.ptr;
+
+  #asm AVX { out: vec; }
+  i := 0;
+  for 0..simd_n / 8 - 1 {
+    eval_it_simd(expr, out, it);
+    #asm AVX { movups [ptr + i * 8], out; }
+    i += size_of(T);
+  }
+
+  for simd_n..ret.count - 1 ret.data[it] = eval_it(expr, it);
+}
+
 
 eval_it :: inline (t: Tensor($T), i: s64) -> T { 
   return t.data[i]; 
