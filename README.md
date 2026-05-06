@@ -13,7 +13,7 @@ python3 sandbox/bench_torch.py # Reference torch implementation of the same oper
 
 And bellow is a demo of the current API
 
-```haskell
+```cpp
 N := 10;
 a := range(.[N, N], f32);  defer tensor_free(a);
 b := ones (.[N, N], f32);  defer tensor_free(b);
