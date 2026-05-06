@@ -2,7 +2,7 @@
 - [ ] Boolean operators, and more generally think about support for operations
         that do not return the same types as the operands
 - [ ] Resolve `compute` vs `compute_simd` dichotomy
-- [ ] Tie AVX/FMA functions to capabilities
+- [ ] Tie AVX/FMA functions to CPU capabilities
 - [ ] Add SIMD support for `dtype`s other than `f32`
 
 # Bugs

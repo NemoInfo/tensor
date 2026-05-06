@@ -15,8 +15,13 @@ is_leaf :: ($T: Type) -> bool #compile_time {
   return (cast(*Type_Info_Struct) ti).name == "Tensor";
 }
 
+
+/* [Sethi-Ullman: The Generation of Optimal Code for Arithmetic Expressions](https://dl.acm.org/doi/epdf/10.1145/321607.321620)
+    @TODO: explain this
+*/
+
 // ll * lr + r
-eval_it_simd :: (expr: *Op2(.ADD, f32, Op2(.MUL, f32, $LL, $LR, $C2), $R, $C1), out: reg, i: s64) #expand {
+eval_it_simd :: (expr: *Op2(.ADD, f32, Op2(.MUL, f32, $LL, $LR, $C2), $R, $C1), out: reg, i: s64, bad: s64) #expand {
   ll_cost :: #run get_cost(LL);
   lr_cost :: #run get_cost(LR);
   r_cost  :: #run get_cost(R);
@@ -98,28 +103,18 @@ eval_it_simd :: (expr: *Op2($K, f32, $L, $R, $Cost), out: reg, i: s64, __dumy: $
     // heavy on right: eval right first into out
     eval_it_simd(*expr.rhs, out, i);
 
-    #if #run is_leaf(L) {
-      // left is a tensor: fold as memory operand
-      // ADD/MUL are commutative so we can flip; SUB/DIV need a tmp
+    #if (K == .ADD || K == .MUL) && #run is_leaf(L) {
+      // ADD/MUL are commutative so we can flip; SUB/DIV need a register
       ptr := expr.lhs.ptr;
-      #if K == .ADD { #asm AVX { addps out, out, [ptr + i * 8]; } }
-      #if K == .MUL { #asm AVX { mulps out, out, [ptr + i * 8]; } }
-      #if K == .SUB { #asm AVX { tmp: vec;
-                                 movups tmp, [ptr + i * 8];
-                                 subps  tmp, tmp, out;
-                                 movaps out, tmp; } }
-      #if K == .DIV { #asm AVX { tmp: vec;
-                                 movups tmp, [ptr + i * 8];
-                                 divps  tmp, tmp, out;
-                                 movaps out, tmp; } }
-    } else {
-      // left is a subtree: needs its own register
+      #if K == .ADD #asm AVX { addps out, out, [ptr + i * 8]; }
+      #if K == .MUL #asm AVX { mulps out, out, [ptr + i * 8]; }
+    } else { // left is a subtree: needs its own register
       #asm AVX { lhs_reg: vec; }
       eval_it_simd(*expr.lhs, lhs_reg, i);
-      #if K == .ADD { #asm AVX { addps out, lhs_reg, out; } }
-      #if K == .MUL { #asm AVX { mulps out, lhs_reg, out; } }
-      #if K == .SUB { #asm AVX { subps out, lhs_reg, out; } }
-      #if K == .DIV { #asm AVX { divps out, lhs_reg, out; } }
+      #if K == .ADD #asm AVX { addps out, lhs_reg, out; }
+      #if K == .MUL #asm AVX { mulps out, lhs_reg, out; }
+      #if K == .SUB #asm AVX { subps out, lhs_reg, out; }
+      #if K == .DIV #asm AVX { divps out, lhs_reg, out; }
     }
 
   } else {
@@ -127,21 +122,20 @@ eval_it_simd :: (expr: *Op2($K, f32, $L, $R, $Cost), out: reg, i: s64, __dumy: $
     eval_it_simd(*expr.lhs, out, i);
 
     #if #run is_leaf(R) {
-      // #run dbg("left heavy, right leaf");
       // right is a tensor: fold as memory operand
       ptr := expr.rhs.ptr;
-      #if K == .ADD { #asm AVX { addps out, out, [ptr + i * 8]; } }
-      #if K == .MUL { #asm AVX { mulps out, out, [ptr + i * 8]; } }
-      #if K == .SUB { #asm AVX { subps out, out, [ptr + i * 8]; } }
-      #if K == .DIV { #asm AVX { divps out, out, [ptr + i * 8]; } }
+      #if K == .ADD #asm AVX { addps out, out, [ptr + i * 8]; }
+      #if K == .MUL #asm AVX { mulps out, out, [ptr + i * 8]; }
+      #if K == .SUB #asm AVX { subps out, out, [ptr + i * 8]; }
+      #if K == .DIV #asm AVX { divps out, out, [ptr + i * 8]; }
     } else {
       // right is a subtree: needs its own register
       #asm AVX { rhs_reg: vec; }
       eval_it_simd(*expr.rhs, rhs_reg, i);
-      #if K == .ADD { #asm AVX { addps out, out, rhs_reg; } }
-      #if K == .MUL { #asm AVX { mulps out, out, rhs_reg; } }
-      #if K == .SUB { #asm AVX { subps out, out, rhs_reg; } }
-      #if K == .DIV { #asm AVX { divps out, out, rhs_reg; } }
+      #if K == .ADD #asm AVX { addps out, out, rhs_reg; }
+      #if K == .MUL #asm AVX { mulps out, out, rhs_reg; }
+      #if K == .SUB #asm AVX { subps out, out, rhs_reg; }
+      #if K == .DIV #asm AVX { divps out, out, rhs_reg; }
     }
   }
 }

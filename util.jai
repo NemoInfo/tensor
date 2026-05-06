@@ -18,6 +18,7 @@ dbg :: (a: Code, loc := #caller_location) #expand {
     print("[%:%:%] % = %\n", loc.fully_pathed_filename, loc.line_number, loc.character_number, str, val);
 }
 
+// @BUG: this eats parenthesis for breakfast for some reason
 print_code :: (a: Code) -> string #compile_time {
   #import "Compiler";
   #import "Program_Print";

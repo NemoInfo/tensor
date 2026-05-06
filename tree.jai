@@ -107,12 +107,12 @@ get_dtype :: (S: Type) -> Type #compile_time {
 
 get_cost :: (S: Type) -> s64 #compile_time {
   ti := cast(*Type_Info) S;
-  if ti.type != .STRUCT return -1;
+  if ti.type != .STRUCT return 1;
   tis := cast(*Type_Info_Struct) ti;
   if tis.name == {
-    case "Tensor"; return 1;
-    case "Op1";    panic("Not implemented");
-    case "Op2";
+    case "Tensor"; return 0;
+    case "Op1"; panic("unreachable");
+    case "Op2"; 
     for tis.specified_parameters {
       if it.name != "Cost" continue;
       return (cast(*s64) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
@@ -193,19 +193,19 @@ is_broadcasting :: (expr: Op2($K, $T, $L, $R, $Cost), output_shape: []s64) -> bo
          is_broadcasting(expr.rhs, output_shape);
 }
 
-compute :: inline (expr: $E, simd: bool = false) -> Tensor($T) #modify {
+compute :: inline (expr: $E) -> Tensor($T) #modify {
   T = get_dtype(E);
   return true;
 } {
   shape := shape_of(expr);
   ret   := tensor(shape, T);
 
-  compute(expr, *ret,simd);
+  compute(expr, *ret);
 
   return ret;
 }
 
-compute :: inline (expr: $E, ret: *Tensor($T), simd: bool = false) #modify {
+compute :: inline (expr: $E, ret: *Tensor($T)) #modify {
   T = get_dtype(E);
   return true;
 } {

@@ -70,6 +70,7 @@ ones :: (shape: []s64, $T: Type = f32, allocator : Allocator = context.allocator
 }
 
 range :: (shape: []s64, $T: Type = f32, allocator : Allocator = context.allocator) -> Tensor(T) {
+  Sloppy_Math :: #import "Sloppy_Math";
   assert(cast(f64) Sloppy_Math.max_of_type(T) >= cast(f64) (count(shape) - 1),
     "Range maximum value (%) exceeds % upper bound (%).", (count(shape) - 1), T , Sloppy_Math.max_of_type(T));
   res := tensor(shape, T, allocator);
@@ -89,10 +90,9 @@ shape_eq :: (a: []s64, b: []s64) -> bool {
   return true;
 }
 
-main :: () { test(); benchmark_simd(); }
-
 tensor_print :: (a: Tensor($T)) { tensor_print(a.tensor); }
 tensor_print :: (a: RawTensor($T)) {
+  Default_Allocator :: #import "Default_Allocator";
   push_allocator(Default_Allocator.allocator);
   if a.ndim == 0  { print("%\n", a.data[0]); return; }
 
@@ -130,8 +130,4 @@ tensor_print :: (a: RawTensor($T)) {
 
 #import "Basic";
 #load "tree.jai";
-#load "util.jai";
 #load "simd.jai";
-#load "benchmark.jai";
-Default_Allocator :: #import "Default_Allocator";
-Sloppy_Math       :: #import "Sloppy_Math";
