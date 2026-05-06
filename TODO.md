@@ -4,7 +4,6 @@
 - [ ] Resolve `compute` vs `compute_simd` dichotomy
 - [ ] Tie AVX/FMA functions to capabilities
 - [ ] Add SIMD support for `dtype`s other than `f32`
-- [ ] 
 
 # Bugs
 - [ ] Debug performance hit in complex expressions
