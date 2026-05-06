@@ -36,15 +36,25 @@ JAI
 
 OP2 :: #string,\% JAI
 %1 :: (l: $L, r: $R) -> $RET #modify {
+  if !is_node(L) && !is_node(R) return false;
+
   l_dtype := get_dtype(L);
   r_dtype := get_dtype(R);
+  if l_dtype != r_dtype return false, tprint("lhs dtype != rhs dtype mismatch \% != \%", l_dtype, r_dtype);
+
   l_cost := get_cost(L);
   r_cost := get_cost(R);
+
   cost := ifx l_cost == r_cost then l_cost + 1 else max(l_cost, r_cost);
-  if l_dtype != r_dtype return false, tprint("lhs dtype != rhs dtype mismatch \% != \%", l_dtype, r_dtype);
+
   RET = #dynamic_specialize Op2(K = .%2, T = l_dtype, L = L, R = R, Cost = cost);
   return true; 
 } { return .{l, r}; }
+JAI
+
+// @TODO: polish this
+OP2EQ :: #string,\% JAI
+operator %1= :: (x: *Tensor($T), y: $O) { compute_simd(x.* %1 y, x); }
 JAI
 
 using struct {
@@ -60,6 +70,23 @@ using struct {
   #insert #run tprint(OP1, "cos", "COS");
   #insert #run tprint(OP1, "tan", "TAN");
   #insert #run tprint(OP1, "cot", "COT");
+
+  #insert #run tprint(OP2EQ, "+");
+  #insert #run tprint(OP2EQ, "-");
+  #insert #run tprint(OP2EQ, "*");
+  #insert #run tprint(OP2EQ, "/");
+}
+
+is_node :: (S: Type) -> bool #compile_time {
+  ti := cast(*Type_Info) S;
+  if ti.type != .STRUCT return false;
+  tis := cast(*Type_Info_Struct) ti;
+  if tis.name == {
+    case "Tensor"; #through;
+    case "Op1";    #through;
+    case "Op2"; return true;
+  }
+  return false;
 }
 
 get_dtype :: (S: Type) -> Type #compile_time {
@@ -195,18 +222,6 @@ compute :: inline (expr: $E, ret: *Tensor($T), simd: bool = false) #modify {
       }
       ret.data[it] = eval_it(expr, nd_index);
     }
-  } else if simd {
-    simd_n := ret.count & ~(cast(s64) 7);
-
-    #asm AVX { out: vec; }
-    for 0..simd_n / 8 - 1 {
-      i := it * size_of(T);
-      eval_it_simd(expr, out, it);
-      ptr : *T = ret.data.data;
-      #asm AVX { movups [ptr + i * 8], out; }
-    }
-
-    for simd_n..ret.count - 1 ret.data[it] = eval_it(expr, it);
   } else {
     for 0..ret.count - 1 ret.data[it] = eval_it(expr, it);
   }
@@ -222,14 +237,17 @@ compute_simd :: inline (expr: $E, ret: *Tensor($T)) #modify {
   #asm AVX { out: vec; }
   i := 0;
   for 0..simd_n / 8 - 1 {
-    eval_it_simd(expr, out, it);
+    eval_it_simd(*expr, out, it);
     #asm AVX { movups [ptr + i * 8], out; }
     i += size_of(T);
-  }
+  } 
 
   for simd_n..ret.count - 1 ret.data[it] = eval_it(expr, it);
 }
 
+
+// @TODO: Consider turining these to macro expansions as well? might speed us
+//        up since i dont have to deal with the stack pointer...
 
 eval_it :: inline (t: Tensor($T), i: s64) -> T { 
   return t.data[i]; 

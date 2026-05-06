@@ -1,106 +1,72 @@
+N :: 1024;
+
 benchmark_simd :: () {
-  N :: 1024;
-  I :: 100;
-  total :: #run cast(f64)(N * N * I);
 
   a := range(.[N, N], f32); defer tensor_free(a);
   b := ones( .[N, N], f32); defer tensor_free(b);
   c := ones( .[N, N], f32); defer tensor_free(c);
+  ret := tensor(shape_of(a * b + c), f32); defer tensor_free(ret);
 
-  naive_time : f64 = 0.0;
-  {
-    start := current_time_monotonic();
-    tmp := raw_tensor(.[N,N], f32); defer tensor_free(*tmp);
-    res := raw_tensor(.[N,N], f32); defer tensor_free(*res);
-    for 1..I {
-      for 0..tmp.count-1 tmp.data[it] = a.data[it] * b.data[it];
-      for 0..res.count-1 res.data[it] = tmp.data[it] + c.data[it];
-    }
-    naive_time = to_float64_seconds(current_time_monotonic() - start);
-  }
-  print("flat (naive): % Melem/s\n", total / naive_time  / 1_000_000);
-
-  smart_time : f64 = 0.0;
-  {
-    start := current_time_monotonic();
-    res := raw_tensor(.[N,N], f32); defer tensor_free(*res);
-    ad := a.ptr;
-    bd := b.ptr;
-    cd := c.ptr;
-    rd := res.ptr;
-    for 1..I
-      for 0..res.count-1 rd[it] = ad[it] * bd[it] + cd[it];
-    smart_time = to_float64_seconds(current_time_monotonic() - start);
-  }
-  print("flat (optimal): % Melem/s\n", total / smart_time  / 1_000_000);
-
-  fused_time : f64 = 0.0;
-  {
-    start := current_time_monotonic();
-    ret   := tensor(shape_of(a * b + c), f32); defer tensor_free(ret);
-    expr := ((a*(c + b) + a*b) * (a*b + a*b)) * ((a*b + a*b) * (c*a + a*b));
-    for 1..I compute(expr, *ret);
-    fused_time = to_float64_seconds(current_time_monotonic() - start);
-  }
-  print("fused: % Melem/s\n", total / fused_time  / 1_000_000);
-
-  avx_time : f64 = 0.0;
-  {
-    start := current_time_monotonic();
-    res := raw_tensor(.[N, N], f32); defer tensor_free(*res);
-    for 1..I simd_muladd_avx(a.data.data, b.data.data, c.data.data, res.data.data, res.count);
-    avx_time = to_float64_seconds(current_time_monotonic() - start);
-  }
-  print("avx (optimal): % Melem/s\n", total / avx_time  / 1_000_000);
-
-  simd : f64 = 0.0;
-  {
-    start := current_time_monotonic();
-    ret   := tensor(shape_of(a * b + c), f32); defer tensor_free(ret);
-    expr  := ((a*(c + b) + a*b) * (a*b + a*b)) * ((a*b + a*b) * (c*a + a*b));
-
-    for 1..I compute_simd(expr, *ret);
-  
-    simd = to_float64_seconds(current_time_monotonic() - start);
-  }
-  print("avx fused: % Melem/s\n", total / simd  / 1_000_000);
+  // expr  := ((a*(c + b) + a*b) * (a*b + a*b)) * ((a*b + a*b) * (c*a + a*b));
+  benchmark_function(naive(a, b, c, *ret));
+  benchmark_function(fused(a, b, c, *ret));
+  benchmark_function(compute(a * b + c, *ret));
+  benchmark_function(compute_simd(a * b + c, *ret));
+  benchmark_function(compute_simd((a*(c + b) + a*b), *ret));
+  // benchmark_function(compute_simd((a*(c + b) + a*b) * (a*b + a*b), *ret));
 }
 
-benchmark_function :: (fn: Code) #expand {
-  fn_name :: #run print_code(fn);
-  time : f64 = 0.;
-  start := current_time_monotonic();
-  for 1..I #insert fn;
-  dt := to_float64_seconds(current_time_monotonic() - start);
-  println("%: %M elem/s", fn_name, TOTAL / dt / 1_000_000);
+fused :: (a: Tensor(f32), b: Tensor(f32), c: Tensor(f32), ret: *Tensor(f32)) {
+  for 0..ret.count-1 ret.data[it] = a.data[it] * b.data[it];
 }
 
-simd_muladd_avx :: (a: *f32, b: *f32, c: *f32, res: *f32, n: s64) {
-  simd_n := n & ~(cast(s64) 7);
+naive :: (a: Tensor(f32), b: Tensor(f32), c: Tensor(f32), ret: *Tensor(f32)) {
+  for 0..ret.count-1 ret.data[it] = a.data[it] * b.data[it];
+  for 0..ret.count-1 ret.data[it] = ret.data[it] + c.data[it];
+}
+
+avx_optimal :: (a: Tensor(f32), b: Tensor(f32), c: Tensor(f32), ret: *Tensor(f32)) {
+  a_ptr := a.ptr;
+  b_ptr := b.ptr;
+  c_ptr := c.ptr;
+  ret_ptr := ret.ptr;
+  simd_n  := ret.count & ~(cast(s64) 7);
 
   for 0..simd_n / 8 - 1 {
     #asm AVX {
       va: vec;
-      movups va,     [a + it * 8];
-      mulps  va, va, [b + it * 8];
-      addps  va, va, [c + it * 8];
-      movups [res + it * 8], va;
+      movups va,     [a_ptr + it * 8];
+      mulps  va, va, [b_ptr + it * 8];
+      addps  va, va, [c_ptr + it * 8];
+      movups [ret_ptr + it * 8], va;
     }
   }
 
-  for simd_n..n - 1
-  res[it] = a[it] * b[it] + c[it];
+  for simd_n..ret.count - 1
+    ret_ptr[it] = a_ptr[it] * b_ptr[it] + c_ptr[it];
+}
+
+benchmark_function :: (fn: Code, iterations := 100) #expand {
+  fn_name :: #run center_pad(print_code(fn), 80, #char "-");
+  time : f64 = 0.;
+  start := current_time_monotonic();
+  for 1..iterations #insert fn;
+  dt := to_float64_seconds(current_time_monotonic() - start);
+  res := tprint("% it/s", iterations / dt);
+  println("+%+\n|%|\n+%+", fn_name, center_pad(res, 80), center_pad("", 80, #char "-"));
 }
 
 test :: () {
-  N :: 10;
-  a := range(.[N, N], f32); defer tensor_free(a);
-  b := ones(.[N, N], f32);  defer tensor_free(b);
-  c := ones(.[N, N], f32);  defer tensor_free(c);
-  expr := a * b + c; #run dbg(type_of(expr));
-  ret := tensor(shape_of(a * b + c), f32); defer tensor_free(ret);
-  compute_simd(expr, *ret);
+  N := 10;
+  a := range(.[N, N], f32);  defer tensor_free(a);
+  b := ones (.[N, N], f32);  defer tensor_free(b);
+  c := ones (.[N, N], f32);  defer tensor_free(c);
+  ret := compute(a * b + c); defer tensor_free(ret);
   tensor_print(ret);
+
+  for 1..10 a *= 2.;
+
+  tensor_print(a);
 }
 
 // res := ((a*(c + b) + a*b) * (a*b + a*b)) * ((a*b + a*b) * (c*a + a*b));

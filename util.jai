@@ -42,3 +42,18 @@ panic :: inline (s: string, args: ..Any, exit_code: s32 = 1, loc := #caller_loca
   eprintln(" %", tprint(s, ..args));
   exit(exit_code);
 }
+
+center_pad :: (str: string, width: int, padding_char: u8 = #char " ") -> string {
+  if str.count >= width return str;
+
+  padding_needed := width - str.count;
+  left_padding := padding_needed / 2;
+  right_padding := padding_needed - left_padding;
+
+  lp : [] u8 = NewArray(left_padding,  u8); defer array_free(lp);
+  rp : [] u8 = NewArray(right_padding, u8); defer array_free(rp);
+  for *lp it.* = padding_char;
+  for *rp it.* = padding_char;
+
+  return tprint("%%%", cast(string) lp, str, cast(string) rp);
+}
