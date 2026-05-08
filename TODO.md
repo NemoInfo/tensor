@@ -4,6 +4,9 @@
 - [ ] Resolve `compute` vs `compute_simd` dichotomy
 - [ ] Tie AVX/FMA functions to CPU capabilities
 - [ ] Add SIMD support for `dtype`s other than `f32`
+- [ ] Detect duplicate tensor pointers and merge them together
+- [ ] Add support for storing arbitrary tensor pointers in memory
+- [ ] Path tracking in `eval_it_simd` without inefficient string comparisons, this should speed up compile time a bit
 
 # Bugs
 - [ ] For some reason benchmark is faster with +Autorun vs 

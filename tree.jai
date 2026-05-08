@@ -107,7 +107,7 @@ collect_tensors :: (E: Type, tensors: *[..] string, path := "") #compile_time {
 
 collect_pointer_declarations :: (E: Type) -> string #compile_time {
   sb: String_Builder;
-  for collect_tensors(E) print_to_builder(*sb, "v% := expr%;\n", it_index, it);
+  for collect_tensors(E) print_to_builder(*sb, "t% := expr%;\n", it_index, it);
   return builder_to_string(*sb);
 }
 
@@ -279,15 +279,20 @@ compute_simd :: inline (expr: $E, ret: *Tensor($T)) #modify {
 } {
   #import "File";
 
-
   MAX_COST  :: #run get_cost(E);
   REG_COUNT :: #run min(MAX_COST + 1, 16);
 
   simd_n := ret.count & ~(cast(s64) 7);
   ret_ptr := ret.ptr;
   i := 0;
+
   tensors :: #run collect_tensors(E);
-  // #run dbg(collect_pointer_declarations(E));
+
+  // @TODO: I should verify if this pointer math is really slowing me down
+  //        we might be able to actually get away with it
+  //        Consider having an array of pointers to index with a single
+  //        layer of indirection, might be a good compromise ...
+
   #insert #run collect_pointer_declarations(E);
   #insert #run read_entire_file("simd.jai");
 

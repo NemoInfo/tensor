@@ -5,18 +5,17 @@ benchmark :: () {
   a := range(.[N, N], f32); defer tensor_free(a);
   b := ones( .[N, N], f32); defer tensor_free(b);
   c := ones( .[N, N], f32); defer tensor_free(c);
-  expr0 := a * c + b;
-  expr1 := (a*(c + b) + a*b);
   expr2 := (a+(c + b) + (a+b)) + ((a+b) + (b+c)); // this expression makes simd version poop it's pants
-  ret := tensor(shape_of(expr1), f32); defer tensor_free(ret);
+  expr3 := (a*(c + b) + a*b) * (a/b + b*c) + 2.; // this expression makes simd version poop it's pants
+  ret := tensor(shape_of(expr2), f32); defer tensor_free(ret);
 
   // benchmark_function(naive(a, b, c, *ret));  
   // benchmark_function(fused(a, b, c, *ret)); // Reference for optimal asssembly for a * b + c (no simd)
-  benchmark_function(compute(expr2, *ret));
-  // benchmark_function(avx_optimal(a, b, c, *ret)); // Reference for optimal asssembly for a * b + c (simd)
+  // benchmark_function(compute(expr2, *ret));
+  // benchmark_function(manual_optimal_expr2(a, b, c, *ret)); // Reference for optimal asssembly for a * b + c (simd)
   // benchmark_function(compute_simd(expr2, *ret));
-  benchmark_function(manual_optimal_expr2(a, b, c, *ret)); // Reference for optimal asssembly for a * b + c (simd)
-  benchmark_function(compute_simd(expr2, *ret)); // More complex instruction
+  benchmark_function(compute_simd(expr3, *ret));
+  // benchmark_function(compute_simd(expr2 - a / 2., *ret));
 }
 
 manual_optimal_expr2 :: (a: Tensor(f32), b: Tensor(f32), c: Tensor(f32), ret: *Tensor(f32)) {
@@ -122,17 +121,19 @@ test :: () {
   a := range(.[N, N], f32);  defer tensor_free(a);
   b := ones (.[N, N], f32);  defer tensor_free(b);
   c := ones (.[N, N], f32);  defer tensor_free(c);
-  expr0 := a * c + b;
-  expr1 := (a*(c + b) + a*b);
-  expr2 := (a+(c + b) + (a+b)) + ((a+b) + (b+c)); // this expression makes simd version poop it's pants
-  ret := compute_simd(expr2); defer tensor_free(ret);
-  tensor_print(ret);
+  expr2 := a * b + c;
+  // ret := compute_simd(expr2); defer tensor_free(ret);
+  // tensor_print(ret);
+  
+  // expr2 := (a*(c + b) + (a+b)) + ((a+b) + (b+c));
+  // ret := compute_simd(expr2); defer tensor_free(ret);
+  // tensor_print(ret);
 
   // op-assign (*=) implicity does compute_simd(a * 2, *a);
   //  not sure if it's a good idea to hide the call to compute 
   //  but it sure gives Pythonic syntax =))
-  for 1..10 a *= 2.;
-  tensor_print(a);
+  // for 1..10 a *= 2.;
+  // tensor_print(a);
   // tensor_print(b);
   // a += b;
   // tensor_print(a);
