@@ -1,12 +1,16 @@
 reg :: __reg;
 
-eval_it_simd :: (v: *f32, out: reg, i: s64) #expand {
-  #asm AVX { broadcastss out, [v]; }
+ymm :: (reg_i: s64) -> string #compile_time {
+  return tprint("ymm%", reg_i);
 }
 
-eval_it_simd :: (t: *Tensor(f32), out: reg, i: s64) #expand {
-  ptr := t.ptr;
-  #asm AVX { movups out, [ptr + i * 8]; }
+eval_it_simd :: (v: *f32, $next_reg : s64, $path: string = "") #expand {
+  #insert #run tprint("#asm AVX { broadcastss.y %1, [v]; }", ymm(next_reg));
+}
+
+eval_it_simd :: (t: *Tensor(f32), $next_reg : s64, $path: string = "") #expand {
+  vn  :: #run find_vn(tprint("%.ptr", path));
+  #insert #run tprint("#asm AVX { movups.y %1, [v%2 + i]; }", ymm(next_reg), vn);
 }
 
 is_leaf :: ($T: Type) -> bool #compile_time {
@@ -15,127 +19,60 @@ is_leaf :: ($T: Type) -> bool #compile_time {
   return (cast(*Type_Info_Struct) ti).name == "Tensor";
 }
 
-
-/* [Sethi-Ullman: The Generation of Optimal Code for Arithmetic Expressions](https://dl.acm.org/doi/epdf/10.1145/321607.321620)
-    @TODO: explain this
-*/
-
-// ll * lr + r
-eval_it_simd :: (expr: *Op2(.ADD, f32, Op2(.MUL, f32, $LL, $LR, $C2), $R, $C1), out: reg, i: s64, bad: s64) #expand {
-  ll_cost :: #run get_cost(LL);
-  lr_cost :: #run get_cost(LR);
-  r_cost  :: #run get_cost(R);
-
-  #if ll_cost >= lr_cost && ll_cost >= r_cost {
-    eval_it_simd(*expr.lhs.lhs, out, i);
-    #if #run is_leaf(LR) { // 132 lr ptr
-      #asm AVX { r_reg: vec; }
-      eval_it_simd(*expr.rhs, r_reg, i);
-      ptr := expr.lhs.rhs.ptr;
-      #asm AVX, FMA { fmadd132ps out, r_reg, [ptr + i * 8]; }
-    } else #if #run is_leaf(R) { // 213 r ptr
-      #asm AVX { lr_reg: vec; } eval_it_simd(*expr.lhs.rhs, lr_reg, i);
-      ptr := expr.rhs.ptr;
-      #asm AVX, FMA { fmadd213ps out, lr_reg, [ptr + i * 8]; }
-    } else { // 213 nobody ptr
-      #if lr_cost >= r_cost {
-        #asm AVX {  r_reg: vec; } eval_it_simd(*expr.rhs, r_reg, i);
-        #asm AVX { lr_reg: vec; } eval_it_simd(*expr.lhs.rhs, lr_reg, i);
-      } else {
-        #asm AVX { lr_reg: vec; } eval_it_simd(*expr.lhs.rhs, lr_reg, i);
-        #asm AVX {  r_reg: vec; } eval_it_simd(*expr.rhs, r_reg, i);
-      }
-      #asm AVX, FMA { fmadd213ps out, lr_reg, r_reg; }
-    }
-  } else #if lr_cost >= ll_cost && lr_cost >= r_cost {
-    eval_it_simd(*expr.lhs.rhs, out, i);
-    #if #run is_leaf(LL) { // 132 ll ptr
-      #asm AVX { r_reg: vec; }
-      eval_it_simd(*expr.rhs, r_reg, i);
-      ptr := expr.lhs.lhs.ptr;
-      #asm AVX, FMA { fmadd132ps out, r_reg, [ptr + i * 8]; }
-    } else #if #run is_leaf(R) { // 213 r ptr
-      #asm AVX { ll_reg: vec; }
-      eval_it_simd(*expr.lhs.lhs, ll_reg, i);
-      ptr := expr.rhs.ptr;
-      #asm AVX, FMA { fmadd213ps out, ll_reg, [ptr + i * 8]; }
-    } else { // 213 nobody ptr
-      #if ll_cost >= r_cost {
-        #asm AVX { ll_reg: vec; } eval_it_simd(*expr.lhs.lhs, ll_reg, i);
-        #asm AVX {  r_reg: vec; } eval_it_simd(*expr.rhs, r_reg, i);
-      } else {
-        #asm AVX {  r_reg: vec; } eval_it_simd(*expr.rhs, r_reg, i);
-        #asm AVX { ll_reg: vec; } eval_it_simd(*expr.lhs.lhs, ll_reg, i);
-      }
-      #asm AVX, FMA { fmadd213ps out, ll_reg, r_reg; }
-    }
-  } else /* r_cost highest */ {
-    eval_it_simd(*expr.rhs, out, i);
-    #if #run is_leaf(LL) {
-      #asm AVX { lr_reg: vec; }
-      eval_it_simd(*expr.lhs.rhs, lr_reg, i);
-      ptr := expr.lhs.lhs.ptr;
-      #asm AVX, FMA { fmadd231ps out, lr_reg, [ptr + i * 8]; }
-    } else #if #run is_leaf(LR) {
-      #asm AVX { ll_reg: vec; }
-      eval_it_simd(*expr.lhs.lhs, ll_reg, i);
-      ptr := expr.lhs.rhs.ptr;
-      #asm AVX, FMA { fmadd231ps out, ll_reg, [ptr + i * 8]; }
-    } else {
-      #if ll_cost >= r_cost {
-        #asm AVX { ll_reg: vec; } eval_it_simd(*expr.lhs.lhs, ll_reg, i);
-        #asm AVX { lr_reg: vec; } eval_it_simd(*expr.lhs.rhs, lr_reg, i);
-      } else {
-        #asm AVX { lr_reg: vec; } eval_it_simd(*expr.lhs.rhs, lr_reg, i);
-        #asm AVX { ll_reg: vec; } eval_it_simd(*expr.lhs.lhs, ll_reg, i);
-      }
-      #asm AVX, FMA { fmadd231ps out, ll_reg, lr_reg; }
-    }
-  }
-}
-
-eval_it_simd :: (expr: *Op2($K, f32, $L, $R, $Cost), out: reg, i: s64, __dumy: $Dummy = void)
+eval_it_simd :: (expr: *Op2($K, f32, $L, $R, $Cost), $next_reg : s64, 
+                 $path: string = "", __dumy: $Dummy = void)
 #expand {
   l_cost :: #run get_cost(L);
   r_cost :: #run get_cost(R);
 
   #if r_cost > l_cost {
     // heavy on right: eval right first into out
-    eval_it_simd(*expr.rhs, out, i);
+    eval_it_simd(*expr.rhs, next_reg, #run tprint("%.rhs", path));
 
     #if (K == .ADD || K == .MUL) && #run is_leaf(L) {
       // ADD/MUL are commutative so we can flip; SUB/DIV need a register
-      ptr := expr.lhs.ptr;
-      #if K == .ADD #asm AVX { addps out, out, [ptr + i * 8]; }
-      #if K == .MUL #asm AVX { mulps out, out, [ptr + i * 8]; }
+      vn :: #run find_vn(tprint("%.lhs.ptr", path));
+      #insert #run tprint(#string JAI
+        #if K == .ADD #asm AVX { addps.y %1, %1, [v%2 + i]; }
+        #if K == .MUL #asm AVX { mulps.y %1, %1, [v%2 + i]; }
+      JAI, ymm(next_reg), vn);
     } else { // left is a subtree: needs its own register
-      #asm AVX { lhs_reg: vec; }
-      eval_it_simd(*expr.lhs, lhs_reg, i);
-      #if K == .ADD #asm AVX { addps out, lhs_reg, out; }
-      #if K == .MUL #asm AVX { mulps out, lhs_reg, out; }
-      #if K == .SUB #asm AVX { subps out, lhs_reg, out; }
-      #if K == .DIV #asm AVX { divps out, lhs_reg, out; }
+      eval_it_simd(*expr.lhs, #run next_reg + 1, #run tprint("%.lhs", path));
+      #insert #run tprint(#string JAI
+        #if K == .ADD #asm AVX { addps.y %1, %2, %1; }
+        #if K == .MUL #asm AVX { mulps.y %1, %2, %1; }
+        #if K == .SUB #asm AVX { subps.y %1, %2, %1; }
+        #if K == .DIV #asm AVX { divps.y %1, %2, %1; }
+      JAI, ymm(next_reg), ymm(next_reg + 1));
     }
 
   } else {
     // heavy on left (or equal): eval left first into out
-    eval_it_simd(*expr.lhs, out, i);
+    eval_it_simd(*expr.lhs, next_reg, #run tprint("%.lhs", path));
 
     #if #run is_leaf(R) {
       // right is a tensor: fold as memory operand
-      ptr := expr.rhs.ptr;
-      #if K == .ADD #asm AVX { addps out, out, [ptr + i * 8]; }
-      #if K == .MUL #asm AVX { mulps out, out, [ptr + i * 8]; }
-      #if K == .SUB #asm AVX { subps out, out, [ptr + i * 8]; }
-      #if K == .DIV #asm AVX { divps out, out, [ptr + i * 8]; }
+      vn :: #run find_vn(tprint("%.rhs.ptr", path));
+      #insert #run tprint(#string JAI
+        #if K == .ADD #asm AVX { addps.y %1, %1, [v%2 + i]; }
+        #if K == .MUL #asm AVX { mulps.y %1, %1, [v%2 + i]; }
+        #if K == .SUB #asm AVX { subps.y %1, %1, [v%2 + i]; }
+        #if K == .DIV #asm AVX { divps.y %1, %1, [v%2 + i]; }
+      JAI, ymm(next_reg), vn);
     } else {
       // right is a subtree: needs its own register
-      #asm AVX { rhs_reg: vec; }
-      eval_it_simd(*expr.rhs, rhs_reg, i);
-      #if K == .ADD #asm AVX { addps out, out, rhs_reg; }
-      #if K == .MUL #asm AVX { mulps out, out, rhs_reg; }
-      #if K == .SUB #asm AVX { subps out, out, rhs_reg; }
-      #if K == .DIV #asm AVX { divps out, out, rhs_reg; }
+      eval_it_simd(*expr.rhs, #run next_reg + 1, #run tprint("%.rhs", path));
+      #insert #run tprint(#string JAI
+      #if K == .ADD #asm AVX { addps.y %1, %1, %2; }
+      #if K == .MUL #asm AVX { mulps.y %1, %1, %2; }
+      #if K == .SUB #asm AVX { subps.y %1, %1, %2; }
+      #if K == .DIV #asm AVX { divps.y %1, %1, %2; }
+      JAI, ymm(next_reg), ymm(next_reg + 1));
     }
   }
+}
+
+find_vn :: (path: string) -> s64  #compile_time {
+  for tensors if it == path return it_index;
+  return -1;
 }

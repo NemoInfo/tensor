@@ -11,7 +11,8 @@ c = np.ones((N, N), dtype=np.float32)
 if __name__ == "__main__":
   start = time()
   for i in range(I): 
-    r = a * b + c
+    r = (a+(c + b) + (a+b)) + ((a+b) + (b+c))
 
-  print(f"numpy: {I / (time() - start):.6f} it/s");
+  dt = time() - start
+  print(f"numpy: {I / dt:.6f} it/s ({int(dt * 1000):,}ms elapsed)");
 

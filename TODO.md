@@ -6,4 +6,6 @@
 - [ ] Add SIMD support for `dtype`s other than `f32`
 
 # Bugs
-- [ ] Debug performance hit in complex expressions
+- [ ] For some reason benchmark is faster with +Autorun vs 
+      just running the binary, either the cache is warmer or there is some funny bussiness
+- [x] Debug performance hit in complex expressions

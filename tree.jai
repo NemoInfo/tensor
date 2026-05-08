@@ -77,6 +77,40 @@ using struct {
   #insert #run tprint(OP2EQ, "/");
 }
 
+collect_tensors :: (E: Type) -> [] string #compile_time {
+  tensors : [..] string;
+  collect_tensors(E, *tensors);
+  return tensors;
+}
+
+collect_tensors :: (E: Type, tensors: *[..] string, path := "") #compile_time {
+  ti := cast(*Type_Info) E;
+  if ti.type != .STRUCT return;
+  tis := cast(*Type_Info_Struct) ti;
+  if tis.name == {
+    case "Tensor"; array_add(tensors, sprint("%.ptr", path));
+    case "Op1"; for tis.specified_parameters if it.name == "C" {
+      arg_type := (cast(*Type) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
+      collect_tensors(arg_type, tensors, sprint("%.arg", path));
+    }
+    case "Op2"; 
+      for tis.specified_parameters if it.name == {
+        case "L";
+          arg_type := (cast(*Type) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
+          collect_tensors(arg_type, tensors, sprint("%.lhs", path));
+        case "R";
+          arg_type := (cast(*Type) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
+          collect_tensors(arg_type, tensors, sprint("%.rhs", path));
+      }
+  }
+}
+
+collect_pointer_declarations :: (E: Type) -> string #compile_time {
+  sb: String_Builder;
+  for collect_tensors(E) print_to_builder(*sb, "v% := expr%;\n", it_index, it);
+  return builder_to_string(*sb);
+}
+
 is_node :: (S: Type) -> bool #compile_time {
   ti := cast(*Type_Info) S;
   if ti.type != .STRUCT return false;
@@ -227,24 +261,53 @@ compute :: inline (expr: $E, ret: *Tensor($T)) #modify {
   }
 }
 
+compute_simd :: inline (expr: $E) -> Tensor($T) #modify {
+  T = get_dtype(E);
+  return true;
+} {
+  shape := shape_of(expr);
+  ret   := tensor(shape, T);
+
+  compute_simd(expr, *ret);
+
+  return ret;
+}
+
 compute_simd :: inline (expr: $E, ret: *Tensor($T)) #modify {
   T = get_dtype(E);
   return true;
 } {
-  simd_n := ret.count & ~(cast(s64) 7);
-  ptr : *T = ret.ptr;
+  #import "File";
 
-  #asm AVX { out: vec; }
+
+  MAX_COST  :: #run get_cost(E);
+  REG_COUNT :: #run min(MAX_COST + 1, 16);
+
+  simd_n := ret.count & ~(cast(s64) 7);
+  ret_ptr := ret.ptr;
   i := 0;
+  tensors :: #run collect_tensors(E);
+  // #run dbg(collect_pointer_declarations(E));
+  #insert #run collect_pointer_declarations(E);
+  #insert #run read_entire_file("simd.jai");
+
+  #asm AVX {
+    ymm0:  vec === 0;  ymm1:  vec === 1;  ymm2:  vec === 2;  ymm3:  vec === 3;
+    ymm4:  vec === 4;  ymm5:  vec === 5;  ymm6:  vec === 6;  ymm7:  vec === 7;
+    ymm8:  vec === 8;  ymm9:  vec === 9;  ymm10: vec === 10; ymm11: vec === 11;
+    ymm12: vec === 12; ymm13: vec === 13; ymm14: vec === 14; ymm15: vec === 15;
+  }
+  #if REG_COUNT > 16 {
+    panic("spill not implemented");
+  }
   for 0..simd_n / 8 - 1 {
-    eval_it_simd(*expr, out, it);
-    #asm AVX { movups [ptr + i * 8], out; }
-    i += size_of(T);
+    eval_it_simd(*expr, 0);
+    #asm AVX { movups.y [ret_ptr + i], ymm0; }
+    i += size_of(T) * 8;
   } 
 
   for simd_n..ret.count - 1 ret.data[it] = eval_it(expr, it);
 }
-
 
 // @TODO: Consider turining these to macro expansions as well? might speed us
 //        up since i dont have to deal with the stack pointer...

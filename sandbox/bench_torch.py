@@ -13,7 +13,7 @@ if __name__ == "__main__":
   start = time()
   with torch.no_grad():
     for i in range(I): 
-      r = a * c + b
+      r = (a+(c + b) + (a+b)) + ((a+b) + (b+c))
 
-  print(f"torch: {I / (time() - start):.6f} it/s");
-
+  dt = time() - start
+  print(f"numpy: {I / dt:.6f} it/s ({int(dt * 1000):,}ms elapsed)");

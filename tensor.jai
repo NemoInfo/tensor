@@ -130,4 +130,3 @@ tensor_print :: (a: RawTensor($T)) {
 
 #import "Basic";
 #load "tree.jai";
-#load "simd.jai";
