@@ -134,7 +134,17 @@ collect_tensors :: (E: Type, tensors: *[..] TensorPath, path := TensorPath.{}) #
 
 collect_pointer_declarations :: (E: Type) -> string #compile_time {
   sb: String_Builder;
-  for collect_tensors(E) print_to_builder(*sb, "t% := expr%;\n", it_index, it.suffix);
+  tensor_paths := collect_tensors(E);
+  using_tensor_array := tensor_paths.count > 11;
+  tensor_registers := ifx using_tensor_array then 10 else tensor_paths.count;
+  for i: 0..tensor_registers-1 
+    print_to_builder(*sb, "t% := expr%;\n", i, tensor_paths[i].suffix);
+  if using_tensor_array {
+    print_to_builder(*sb, "ts: [%] *% = .[", tensor_paths.count - 10, get_dtype(E));
+    for i: tensor_registers..tensor_paths.count-1 
+      print_to_builder(*sb, "expr%,\n", tensor_paths[i].suffix);
+    print_to_builder(*sb, "];\nts_ptr := ts.data;");
+  }
   return builder_to_string(*sb);
 }
 
@@ -314,6 +324,7 @@ compute_simd :: inline (expr: $E, ret: *Tensor($T)) #modify {
   i := 0;
 
   tensors :: #run collect_tensors(E);
+  #run dbg(collect_pointer_declarations(E));
   #insert #run collect_pointer_declarations(E);
   #insert #run read_entire_file("simd.jai");
 
@@ -322,6 +333,7 @@ compute_simd :: inline (expr: $E, ret: *Tensor($T)) #modify {
     ymm4:  vec === 4;  ymm5:  vec === 5;  ymm6:  vec === 6;  ymm7:  vec === 7;
     ymm8:  vec === 8;  ymm9:  vec === 9;  ymm10: vec === 10; ymm11: vec === 11;
     ymm12: vec === 12; ymm13: vec === 13; ymm14: vec === 14; ymm15: vec === 15;
+    ptr: gpr === 10;
   }
   #if REG_COUNT > 16 {
     panic("spill not implemented");

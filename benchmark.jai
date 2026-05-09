@@ -19,61 +19,61 @@ benchmark :: () {
 }
 
 manual_optimal_expr2 :: (a: Tensor(f32), b: Tensor(f32), c: Tensor(f32), ret: *Tensor(f32)) {
-    a_ptr := a.ptr;
-    b_ptr := b.ptr;
-    c_ptr := c.ptr;
-    ret_ptr := ret.ptr;
-    simd_n := ret.count & ~(cast(s64) 7);
+  a_ptr := a.ptr;
+  b_ptr := b.ptr;
+  c_ptr := c.ptr;
+  ret_ptr := ret.ptr;
+  simd_n := ret.count & ~(cast(s64) 7);
 
-    for 0..simd_n/8 - 1 {
-        i := it * 32;   // byte offset: 8 floats * 4 bytes each
+  for 0..simd_n/8 - 1 {
+    i := it * 32;   // byte offset: 8 floats * 4 bytes each
 
-        #asm AVX {
-          ymm0: vec === 0;
-          ymm1: vec === 1;
-          ymm2: vec === 2;
-          ymm3: vec === 3;
-          ymm4: vec === 4;
-          ymm5: vec === 5;
-          ymm6: vec === 6;
-          ymm7: vec === 7;
-          ymm8: vec === 8;
-          ymm9: vec === 9;
+    #asm AVX {
+      ymm0: vec === 0;
+      ymm1: vec === 1;
+      ymm2: vec === 2;
+      ymm3: vec === 3;
+      ymm4: vec === 4;
+      ymm5: vec === 5;
+      ymm6: vec === 6;
+      ymm7: vec === 7;
+      ymm8: vec === 8;
+      ymm9: vec === 9;
 
-          // Load a, b, c
-          movups.y ymm0, [a_ptr + i];
-          movups.y ymm1, [b_ptr + i];
-          movups.y ymm2, [c_ptr + i];
+      // Load a, b, c
+      movups.y ymm0, [a_ptr + i];
+      movups.y ymm1, [b_ptr + i];
+      movups.y ymm2, [c_ptr + i];
 
-          // t1 = a + b
-          addps.y  ymm3, ymm0, ymm1;   // ymm3 = a + b
+      // t1 = a + b
+      addps.y  ymm3, ymm0, ymm1;   // ymm3 = a + b
 
-          // t2 = c + b
-          addps.y  ymm4, ymm2, ymm1;   // ymm4 = c + b
+      // t2 = c + b
+      addps.y  ymm4, ymm2, ymm1;   // ymm4 = c + b
 
-          // tmp = a + t2 = a + (c + b)
-          addps.y  ymm5, ymm0, ymm4;   // ymm5 = a + (c + b)
+      // tmp = a + t2 = a + (c + b)
+      addps.y  ymm5, ymm0, ymm4;   // ymm5 = a + (c + b)
 
-          // sum1 = tmp + t1 = a + (c + b) + (a + b)
-          addps.y  ymm6, ymm5, ymm3;
+      // sum1 = tmp + t1 = a + (c + b) + (a + b)
+      addps.y  ymm6, ymm5, ymm3;
 
-          // t3 = b + c
-          addps.y  ymm7, ymm1, ymm2;   // ymm7 = b + c
+      // t3 = b + c
+      addps.y  ymm7, ymm1, ymm2;   // ymm7 = b + c
 
-          // sum2 = t1 + t3 = (a + b) + (b + c)
-          addps.y  ymm8, ymm3, ymm7;
+      // sum2 = t1 + t3 = (a + b) + (b + c)
+      addps.y  ymm8, ymm3, ymm7;
 
-          // final = sum1 + sum2
-          addps.y  ymm9, ymm6, ymm8;
+      // final = sum1 + sum2
+      addps.y  ymm9, ymm6, ymm8;
 
-          movups.y [ret_ptr + i], ymm9;
-        }
+      movups.y [ret_ptr + i], ymm9;
     }
+  }
 
-    // scalar fallback unchanged
-    for simd_n..ret.count-1 {
-        ret.data[it] = a.data[it] + (c.data[it] + b.data[it]) + (a.data[it] + b.data[it]) + (a.data[it] + b.data[it]) + (b.data[it] + c.data[it]);
-    }
+  // scalar fallback unchanged
+  for simd_n..ret.count-1 {
+    ret.data[it] = a.data[it] + (c.data[it] + b.data[it]) + (a.data[it] + b.data[it]) + (a.data[it] + b.data[it]) + (b.data[it] + c.data[it]);
+  }
 }
 
 
@@ -132,16 +132,16 @@ test :: () {
   // op-assign (*=) implicity does compute_simd(a * 2, *a);
   //  not sure if it's a good idea to hide the call to compute 
   //  but it sure gives Pythonic syntax =))
-  for 1..10 a *= 2.;
-  tensor_print(a);
+  // for 1..10 a *= 2.;
+  // tensor_print(a);
   // tensor_print(b);
   // a += b;
   // tensor_print(a);
 }
 
 main :: () {
-  test();
-  // benchmark();
+  // test();
+  benchmark();
 }
 
 #load "tensor.jai";

@@ -5,7 +5,8 @@
 - [ ] Tie AVX/FMA functions to CPU capabilities
 - [ ] Add SIMD support for `dtype`s other than `f32`
 - [ ] Detect duplicate tensor pointers and merge them together
-- [ ] Add support for storing arbitrary tensor pointers in memory
+- [x] Add support for storing arbitrary tensor pointers in memory
+- [x] Use gpr fir first 11 tensors, last one stores ptr to the rest
 - [x] Path tracking in `eval_it_simd` without inefficient string comparisons, this should speed up compile time a bit
 
 # Bugs
