@@ -58,3 +58,9 @@ center_pad :: (str: string, width: int, padding_char: u8 = #char " ") -> string 
 
   return tprint("%%%", cast(string) lp, str, cast(string) rp);
 }
+
+array_eq :: (xs: [] $T, ys: [] T) -> bool {
+  if xs.count != ys.count return false;
+  for 0..xs.count - 1 if xs[it] != ys[it] return false;
+  return true;
+}

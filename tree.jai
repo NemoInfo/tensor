@@ -77,37 +77,64 @@ using struct {
   #insert #run tprint(OP2EQ, "/");
 }
 
-collect_tensors :: (E: Type) -> [] string #compile_time {
-  tensors : [..] string;
+// @TODO: also maybe i should just use two u128s or something, one for length
+//        another as a binary op, that would give a tree that is 128 deep which
+//        is crazy but still, have to think about it.
+lhs :: (path: [] u8) -> [] u8 {
+  new_path := NewArray(path.count + 1, u8);
+  memcpy(new_path.data, path.data, path.count * size_of(u8));
+  new_path[path.count] = 0;
+  return new_path;
+}
+
+rhs :: (path: [] u8) -> [] u8 {
+  new_path := NewArray(path.count + 1, u8);
+  memcpy(new_path.data, path.data, path.count * size_of(u8));
+  new_path[path.count] = 1;
+  return new_path;
+}
+
+TensorPath :: struct {
+  suffix: string;
+  index:  [] u8;
+}
+
+lhs :: (using ti: TensorPath) -> TensorPath { return .{ sprint("%.lhs", suffix), lhs(index) }; }
+rhs :: (using ti: TensorPath) -> TensorPath { return .{ sprint("%.rhs", suffix), rhs(index) }; }
+arg :: (using ti: TensorPath) -> TensorPath { return .{ sprint("%.arg", suffix), index }; }
+ptr :: (using ti: TensorPath) -> TensorPath { return .{ sprint("%.ptr", suffix), index }; }
+
+collect_tensors :: (E: Type) -> [] TensorPath #compile_time {
+  tensors : [..] TensorPath;
   collect_tensors(E, *tensors);
   return tensors;
 }
 
-collect_tensors :: (E: Type, tensors: *[..] string, path := "") #compile_time {
+collect_tensors :: (E: Type, tensors: *[..] TensorPath, path := TensorPath.{}) #compile_time {
   ti := cast(*Type_Info) E;
   if ti.type != .STRUCT return;
   tis := cast(*Type_Info_Struct) ti;
   if tis.name == {
-    case "Tensor"; array_add(tensors, sprint("%.ptr", path));
+    case "Tensor"; array_add(tensors, ptr(path));
     case "Op1"; for tis.specified_parameters if it.name == "C" {
       arg_type := (cast(*Type) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
-      collect_tensors(arg_type, tensors, sprint("%.arg", path));
+      collect_tensors(arg_type, tensors, arg(path));
     }
     case "Op2"; 
       for tis.specified_parameters if it.name == {
         case "L";
           arg_type := (cast(*Type) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
-          collect_tensors(arg_type, tensors, sprint("%.lhs", path));
+          collect_tensors(arg_type, tensors, lhs(path));
         case "R";
           arg_type := (cast(*Type) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
-          collect_tensors(arg_type, tensors, sprint("%.rhs", path));
+          collect_tensors(arg_type, tensors, rhs(path));
       }
   }
 }
 
 collect_pointer_declarations :: (E: Type) -> string #compile_time {
   sb: String_Builder;
-  for collect_tensors(E) print_to_builder(*sb, "t% := expr%;\n", it_index, it);
+  for collect_tensors(E) print_to_builder(*sb, "t% := expr%;\n", it_index, it.suffix);
   return builder_to_string(*sb);
 }
 
@@ -287,12 +314,6 @@ compute_simd :: inline (expr: $E, ret: *Tensor($T)) #modify {
   i := 0;
 
   tensors :: #run collect_tensors(E);
-
-  // @TODO: I should verify if this pointer math is really slowing me down
-  //        we might be able to actually get away with it
-  //        Consider having an array of pointers to index with a single
-  //        layer of indirection, might be a good compromise ...
-
   #insert #run collect_pointer_declarations(E);
   #insert #run read_entire_file("simd.jai");
 

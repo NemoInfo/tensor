@@ -14,7 +14,7 @@ benchmark :: () {
   // benchmark_function(compute(expr2, *ret));
   // benchmark_function(manual_optimal_expr2(a, b, c, *ret)); // Reference for optimal asssembly for a * b + c (simd)
   // benchmark_function(compute_simd(expr2, *ret));
-  benchmark_function(compute_simd(expr3, *ret));
+  benchmark_function(compute_simd(expr3 + expr3, *ret));
   // benchmark_function(compute_simd(expr2 - a / 2., *ret));
 }
 
@@ -132,17 +132,16 @@ test :: () {
   // op-assign (*=) implicity does compute_simd(a * 2, *a);
   //  not sure if it's a good idea to hide the call to compute 
   //  but it sure gives Pythonic syntax =))
-  // for 1..10 a *= 2.;
-  // tensor_print(a);
+  for 1..10 a *= 2.;
+  tensor_print(a);
   // tensor_print(b);
   // a += b;
   // tensor_print(a);
-
 }
 
 main :: () {
-  // test();
-  benchmark();
+  test();
+  // benchmark();
 }
 
 #load "tensor.jai";
