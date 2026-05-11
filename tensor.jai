@@ -9,7 +9,10 @@ RawTensor :: struct (T: Type) {
   allocator: Allocator;
 }
 
-Tensor :: struct($T: Type) { using tensor: *RawTensor(T);}
+Tensor :: struct($T: Type, $Loc: string = "") { 
+  using tensor: *RawTensor(T);
+  loc :: Loc;
+}
 
 TensorFlags :: enum_flags u8 {
   CONTIGUOUS;
@@ -41,7 +44,11 @@ raw_tensor :: (shape: []s64, $T: Type, allocator : Allocator = context.allocator
   return t;
 }
 
-tensor :: (shape: []s64, $T: Type, allocator : Allocator = context.allocator) -> Tensor(T) {
+tensor :: (shape: []s64, $T: Type, $loc := #caller_location, allocator : Allocator = context.allocator) -> $RET 
+#modify {
+  RET = #dynamic_specialize Tensor(T = T, Loc = to_string(loc));
+  return true;
+} {
   res := New(RawTensor(T),,allocator);
   res.* = raw_tensor(shape, T, allocator);
   return .{ res };
@@ -53,27 +60,43 @@ tensor_free :: (t: *RawTensor($T)) {
   array_free(t.stride);
 }
 
-tensor_free :: (t: Tensor($T)) { tensor_free(t.tensor); }
+tensor_free :: (t: Tensor($T, $Loc)) { tensor_free(t.tensor); }
 
-element :: (el: $T, shape: []s64, allocator : Allocator = context.allocator) -> Tensor(T) {
-  res := tensor(shape, T, allocator);
+element :: (el: $T, shape: []s64, $loc := #caller_location, allocator := context.allocator) -> $RET 
+#modify { 
+  RET = #dynamic_specialize Tensor(T = T, Loc = to_string(loc));
+  return true;
+} {
+  res := tensor(shape, T, loc, allocator);
   for 0..res.count-1 res.data[it] = el;
   return res;
 }
 
-zeros :: (shape: []s64, $T: Type = f32, allocator : Allocator = context.allocator) -> Tensor(T) {
-  return element(cast(T) 0, shape, allocator);
+zeros :: (shape: []s64, $T: Type = f32, $loc := #caller_location, allocator := context.allocator) -> $RET 
+#modify { 
+  RET = #dynamic_specialize Tensor(T = T, Loc = to_string(loc));
+  return true;
+} {
+  return element(cast(T) 0, shape, loc, allocator);
 }
 
-ones :: (shape: []s64, $T: Type = f32, allocator : Allocator = context.allocator) -> Tensor(T) {
-  return element(cast(T) 1, shape, allocator);
+ones :: (shape: []s64, $T: Type = f32, $loc := #caller_location, allocator := context.allocator) -> $RET 
+#modify { 
+  RET = #dynamic_specialize Tensor(T = T, Loc = to_string(loc));
+  return true;
+} {
+  return element(cast(T) 1, shape, loc, allocator);
 }
 
-range :: (shape: []s64, $T: Type = f32, allocator : Allocator = context.allocator) -> Tensor(T) {
+range :: (shape: []s64, $T: Type = f32, $loc := #caller_location, allocator := context.allocator) -> $RET 
+#modify { 
+  RET = #dynamic_specialize Tensor(T = T, Loc = to_string(loc));
+  return true;
+} {
   Sloppy_Math :: #import "Sloppy_Math";
   assert(cast(f64) Sloppy_Math.max_of_type(T) >= cast(f64) (count(shape) - 1),
     "Range maximum value (%) exceeds % upper bound (%).", (count(shape) - 1), T , Sloppy_Math.max_of_type(T));
-  res := tensor(shape, T, allocator);
+  res := tensor(shape, T, loc, allocator);
   for 0..res.count-1 res.data[it] = cast(T) it;
   return res;
 }
@@ -90,7 +113,7 @@ shape_eq :: (a: []s64, b: []s64) -> bool {
   return true;
 }
 
-tensor_print :: (a: Tensor($T)) { tensor_print(a.tensor); }
+tensor_print :: (a: Tensor($T, $Loc)) { tensor_print(a.tensor); }
 tensor_print :: (a: RawTensor($T)) {
   Default_Allocator :: #import "Default_Allocator";
   push_allocator(Default_Allocator.allocator);

@@ -1,20 +1,20 @@
 N :: 1024;
-
 benchmark :: () {
 
   a := range(.[N, N], f32); defer tensor_free(a);
   b := ones( .[N, N], f32); defer tensor_free(b);
   c := ones( .[N, N], f32); defer tensor_free(c);
-  expr2 := (a+(c + b) + (a+b)) + ((a+b) + (b+c)); // this expression makes simd version poop it's pants
-  expr3 := (a*(c + b) + a*b) * (a/b + b*c) + 2.; // this expression makes simd version poop it's pants
-  ret := tensor(shape_of(expr2), f32); defer tensor_free(ret);
+  expr2 := (a+(c + b) + (a+b)) + ((a+b) + (b+c));
+  expr3 := (a*(c + b) + a*b) * (a/b + b*c) + 2.;
+  expr4 := (expr3*(c + expr2) + expr3*expr2) * (expr3/expr2 + expr2*c) + 2.;
+  ret := tensor(shape_of(expr4), f32); defer tensor_free(ret);
 
   // benchmark_function(naive(a, b, c, *ret));  
   // benchmark_function(fused(a, b, c, *ret)); // Reference for optimal asssembly for a * b + c (no simd)
   // benchmark_function(compute(expr2, *ret));
   // benchmark_function(manual_optimal_expr2(a, b, c, *ret)); // Reference for optimal asssembly for a * b + c (simd)
-  // benchmark_function(compute_simd(expr2, *ret));
-  benchmark_function(compute_simd(expr3 + expr3, *ret));
+  benchmark_function(compute_simd(expr3, *ret));
+  benchmark_function(compute_simd(expr4, *ret));
   // benchmark_function(compute_simd(expr2 - a / 2., *ret));
 }
 
@@ -121,9 +121,9 @@ test :: () {
   a := range(.[N, N], f32);  defer tensor_free(a);
   b := ones (.[N, N], f32);  defer tensor_free(b);
   c := ones (.[N, N], f32);  defer tensor_free(c);
-  expr2 := a * b + c;
-  // ret := compute_simd(expr2); defer tensor_free(ret);
-  // tensor_print(ret);
+  expr2 := a * b + c - 10.;
+  ret := compute_simd(expr2); defer tensor_free(ret);
+  tensor_print(ret);
   
   // expr2 := (a*(c + b) + (a+b)) + ((a+b) + (b+c));
   // ret := compute_simd(expr2); defer tensor_free(ret);
@@ -140,7 +140,7 @@ test :: () {
 }
 
 main :: () {
-  // test();
+  test();
   benchmark();
 }
 

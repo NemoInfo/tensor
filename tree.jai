@@ -54,7 +54,7 @@ JAI
 
 // @TODO: polish this
 OP2EQ :: #string,\% JAI
-operator %1= :: (x: *Tensor($T), y: $O) { compute_simd(x.* %1 y, x); }
+operator %1= :: (x: *Tensor($T, $Loc), y: $O) { compute_simd(x.* %1 y, x); }
 JAI
 
 using struct {
@@ -99,53 +99,90 @@ TensorPath :: struct {
   index:  [] u8;
 }
 
-lhs :: (using ti: TensorPath) -> TensorPath { return .{ sprint("%.lhs", suffix), lhs(index) }; }
-rhs :: (using ti: TensorPath) -> TensorPath { return .{ sprint("%.rhs", suffix), rhs(index) }; }
-arg :: (using ti: TensorPath) -> TensorPath { return .{ sprint("%.arg", suffix), index }; }
-ptr :: (using ti: TensorPath) -> TensorPath { return .{ sprint("%.ptr", suffix), index }; }
-
-collect_tensors :: (E: Type) -> [] TensorPath #compile_time {
-  tensors : [..] TensorPath;
-  collect_tensors(E, *tensors);
-  return tensors;
+TensorInfo :: struct {
+  suffix: string;
+  t_id: s64;
 }
 
-collect_tensors :: (E: Type, tensors: *[..] TensorPath, path := TensorPath.{}) #compile_time {
+#import "Hash_Table";
+to_string :: (using loc: Source_Code_Location) -> string { return sprint("%:%:%", fully_pathed_filename, line_number, character_number); }
+TensorTable :: Table(string, TensorInfo);
+
+collect_tensors :: (E: Type, tensors: *TensorTable, suffix := "") #compile_time {
   ti := cast(*Type_Info) E;
   if ti.type != .STRUCT return;
   tis := cast(*Type_Info_Struct) ti;
   if tis.name == {
-    case "Tensor"; array_add(tensors, ptr(path));
+    case "Tensor"; 
+      for tis.specified_parameters if it.name == "Loc" {
+        loc := (cast(*string) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
+        if !table_contains(tensors, loc)
+          table_add(tensors, loc, .{ptr(suffix), 0});
+        return;
+      }
+
     case "Op1"; for tis.specified_parameters if it.name == "C" {
       arg_type := (cast(*Type) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
-      collect_tensors(arg_type, tensors, arg(path));
+      collect_tensors(arg_type, tensors, arg(suffix));
     }
     case "Op2"; 
       for tis.specified_parameters if it.name == {
         case "L";
           arg_type := (cast(*Type) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
-          collect_tensors(arg_type, tensors, lhs(path));
+          collect_tensors(arg_type, tensors, lhs(suffix));
         case "R";
           arg_type := (cast(*Type) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
-          collect_tensors(arg_type, tensors, rhs(path));
+          collect_tensors(arg_type, tensors, rhs(suffix));
       }
   }
 }
 
-collect_pointer_declarations :: (E: Type) -> string #compile_time {
+collect_tensors :: (E: Type) -> TensorTable #compile_time {
+  tensors : TensorTable;
+  collect_tensors(E, *tensors);
+  return tensors;
+}
+
+lhs :: (suffix: string) -> string { return sprint("%.lhs", suffix); }
+rhs :: (suffix: string) -> string { return sprint("%.rhs", suffix); }
+arg :: (suffix: string) -> string { return sprint("%.arg", suffix); }
+ptr :: (suffix: string) -> string { return sprint("%.ptr", suffix); }
+
+MAX_TENSOR_REGISTERS :: 16
+                       - 1 // ret_ptr
+                       - 1 // i               
+                       - 1 // (stack pointer)
+                       - 1 // (frame pointer)
+                       - 1 // ptr
+                       - 1 // broadcast
+                       ;
+
+collect_pointer_declarations :: (E: Type) -> string, TensorTable #compile_time {
   sb: String_Builder;
-  tensor_paths := collect_tensors(E);
-  using_tensor_array := tensor_paths.count > 11;
-  tensor_registers := ifx using_tensor_array then 10 else tensor_paths.count;
-  for i: 0..tensor_registers-1 
-    print_to_builder(*sb, "t% := expr%;\n", i, tensor_paths[i].suffix);
-  if using_tensor_array {
-    print_to_builder(*sb, "ts: [%] *% = .[", tensor_paths.count - 10, get_dtype(E));
-    for i: tensor_registers..tensor_paths.count-1 
-      print_to_builder(*sb, "expr%,\n", tensor_paths[i].suffix);
-    print_to_builder(*sb, "];\nts_ptr := ts.data;");
+  tensors := collect_tensors(E);
+  using_tensor_array := tensors.count > MAX_TENSOR_REGISTERS;
+  tensor_registers := ifx using_tensor_array then MAX_TENSOR_REGISTERS - 1 else tensors.count;
+  i := 0;
+  for *val, key: tensors {
+    if i < tensor_registers {
+      print_to_builder(*sb, "t% := expr%;\n", i, val.suffix);
+      val.t_id = i;
+    } else { break; }
+    i += 1;
   }
-  return builder_to_string(*sb);
+  if !using_tensor_array return builder_to_string(*sb), tensors;
+
+  print_to_builder(*sb, "ts: [%] *% = .[", tensors.count - (MAX_TENSOR_REGISTERS - 1), get_dtype(E));
+  i = 0;
+  for val, key: *tensors {
+    if i < tensor_registers { i += 1; continue; }
+    print_to_builder(*sb, "expr%,\n", val.suffix);
+    val.t_id = i;
+    i += 1;
+  }
+  print_to_builder(*sb, "];\nts_ptr := ts.data;");
+
+  return builder_to_string(*sb), tensors;
 }
 
 is_node :: (S: Type) -> bool #compile_time {
@@ -176,6 +213,42 @@ get_dtype :: (S: Type) -> Type #compile_time {
   return S;
 }
 
+// lhs :: (S: Type) -> Type #compile_time {
+//   ti := cast(*Type_Info) S;
+//   assert(ti.type == .STRUCT);
+//   tis := cast(*Type_Info_Struct) ti;
+//   assert(tis.name == "Op2");
+//   for tis.specified_parameters {
+//     if it.name != "L" continue;
+//     return (cast(*Type) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
+//   }
+//   panic("unreachable"); 
+// }
+// 
+// rhs :: (S: Type) -> Type #compile_time {
+//   ti := cast(*Type_Info) S;
+//   assert(ti.type == .STRUCT);
+//   tis := cast(*Type_Info_Struct) ti;
+//   assert(tis.name == "Op2");
+//   for tis.specified_parameters {
+//     if it.name != "R" continue;
+//     return (cast(*Type) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
+//   }
+//   panic("unreachable");
+// }
+
+loc :: (S: Type) -> string #compile_time {
+  ti := cast(*Type_Info) S;
+  assert(ti.type == .STRUCT);
+  tis := cast(*Type_Info_Struct) ti;
+  assert(tis.name == "Tensor");
+  for tis.specified_parameters {
+    if it.name != "Loc" continue;
+    return (cast(*string) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
+  }
+  panic("unreachable"); return "";
+}
+
 get_cost :: (S: Type) -> s64 #compile_time {
   ti := cast(*Type_Info) S;
   if ti.type != .STRUCT return 1;
@@ -194,7 +267,7 @@ get_cost :: (S: Type) -> s64 #compile_time {
 
 eval_it :: inline (val: $T, nd_index: []s64) -> T #modify { return T == get_dtype(T); } { return val; }
 
-eval_it :: inline (tensor: Tensor($T), nd_index: []s64) -> T {
+eval_it :: inline (tensor: Tensor($T, $Loc), nd_index: []s64) -> T {
   flat := 0;
   offset := nd_index.count - tensor.ndim;
   for 0..tensor.ndim-1 {
@@ -244,14 +317,14 @@ shape_of :: (expr: Op2($K, $T, $L, $R, $Cost)) -> []s64 {
   return broadcast_shape(shape_of(expr.lhs), shape_of(expr.rhs));
 }
 shape_of :: (expr: Op1($K, $T, $C))     -> []s64 { return shape_of(expr.arg); }
-shape_of :: (tensor: Tensor($T))      -> []s64 { return tensor.shape; }
+shape_of :: (tensor: Tensor($T, $Loc))      -> []s64 { return tensor.shape; }
 shape_of :: (expr: $T) -> []s64 #modify { return T == get_dtype(T); } { return .[]; }
 
 is_broadcasting :: (expr: $E, output_shape: []s64) -> bool #modify { return E == get_dtype(E); } {
   return !shape_eq(shape_of(expr), output_shape);
 }
 
-is_broadcasting :: (t: Tensor($T), output_shape: []s64) -> bool {
+is_broadcasting :: (t: Tensor($T, $Loc), output_shape: []s64) -> bool {
   return !shape_eq(t.shape, output_shape);
 }
 
@@ -264,7 +337,7 @@ is_broadcasting :: (expr: Op2($K, $T, $L, $R, $Cost), output_shape: []s64) -> bo
          is_broadcasting(expr.rhs, output_shape);
 }
 
-compute :: inline (expr: $E) -> Tensor($T) #modify {
+compute :: inline (expr: $E) -> Tensor($T, $Loc) #modify {
   T = get_dtype(E);
   return true;
 } {
@@ -276,7 +349,7 @@ compute :: inline (expr: $E) -> Tensor($T) #modify {
   return ret;
 }
 
-compute :: inline (expr: $E, ret: *Tensor($T)) #modify {
+compute :: inline (expr: $E, ret: *Tensor($T, $Loc)) #modify {
   T = get_dtype(E);
   return true;
 } {
@@ -298,19 +371,19 @@ compute :: inline (expr: $E, ret: *Tensor($T)) #modify {
   }
 }
 
-compute_simd :: inline (expr: $E) -> Tensor($T) #modify {
-  T = get_dtype(E);
+compute_simd :: inline (expr: $E, $loc := #caller_location) -> $RET #modify {
+  RET = #dynamic_specialize Tensor(T = get_dtype(E), Loc = to_string(loc));
   return true;
 } {
   shape := shape_of(expr);
-  ret   := tensor(shape, T);
+  ret   := tensor(shape, #run get_dtype(E), loc);
 
   compute_simd(expr, *ret);
 
   return ret;
 }
 
-compute_simd :: inline (expr: $E, ret: *Tensor($T)) #modify {
+compute_simd :: inline (expr: $E, ret: *Tensor($T, $Loc)) #modify {
   T = get_dtype(E);
   return true;
 } {
@@ -323,9 +396,9 @@ compute_simd :: inline (expr: $E, ret: *Tensor($T)) #modify {
   ret_ptr := ret.ptr;
   i := 0;
 
-  tensors :: #run collect_tensors(E);
-  #run dbg(collect_pointer_declarations(E));
-  #insert #run collect_pointer_declarations(E);
+  declaration, tensors :: #run collect_pointer_declarations(E);
+  #insert declaration;
+  #run println("#########\n%", declaration);
   #insert #run read_entire_file("simd.jai");
 
   #asm AVX {
@@ -338,6 +411,7 @@ compute_simd :: inline (expr: $E, ret: *Tensor($T)) #modify {
   #if REG_COUNT > 16 {
     panic("spill not implemented");
   }
+
   for 0..simd_n / 8 - 1 {
     eval_it_simd(*expr, 0);
     #asm AVX { movups.y [ret_ptr + i], ymm0; }
@@ -350,7 +424,7 @@ compute_simd :: inline (expr: $E, ret: *Tensor($T)) #modify {
 // @TODO: Consider turining these to macro expansions as well? might speed us
 //        up since i dont have to deal with the stack pointer...
 
-eval_it :: inline (t: Tensor($T), i: s64) -> T { 
+eval_it :: inline (t: Tensor($T, $Loc), i: s64) -> T { 
   return t.data[i]; 
 }
 eval_it :: inline (val: $T, i: s64) -> T #modify { 
