@@ -1,27 +1,28 @@
-Thing :: struct($Loc: Source_Code_Location = .{}) {data: s64;}
+Thing :: struct {
+  x:  s64;
+  xs: [] s64;
+}
 
-thing :: (val: s64, $loc := #caller_location) -> $RET #modify {
-  RET = #dynamic_specialize Thing(Loc = loc);
-  return true;
-} { return .{val}; }
+comp_time_thing :: () -> Thing #compile_time {
+  xs: [] s64;
+  array_resize(*xs, xs.count + 1);
+  xs.data[xs.count - 1] = 420;
+  array_resize(*xs, xs.count + 1);
+  xs.data[xs.count - 1] = 420;
+  return .{x = 69, xs = xs};
+}
 
-thing_thing :: (val: s64, $loc := #caller_location) -> $RET #modify {
-  RET = #dynamic_specialize Thing(Loc = loc);
-  return true;
-} {
-  return thing(val, loc);
+comp_time_xs :: () -> [..] s64 #compile_time {
+  xs: [..] s64;
+  array_add(*xs, 420);
+  return xs;
 }
 
 main :: () {
-  t1 := thing_thing(1);
-  t2 := thing_thing(2);
-  t3 := thing_thing(3);
-  print("%\n", type_of(t1));
-  print("%\n", type_of(t2));
-  print("%\n", type_of(t3));
-  print("%\n", size_of(Thing));
-  
-  print("%\n", size_of(Source_Code_Location));
+  X :: #run comp_time_xs();
+  THING :: #run comp_time_thing();
+  print("runtime: %\n", X);
+  print("runtime: %\n", THING);
 }
 
 #import "Basic";

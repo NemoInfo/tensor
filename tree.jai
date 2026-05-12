@@ -1,4 +1,4 @@
-OpKind :: enum {
+OpKind :: enum s64 { // maybe split op1 kind and op2 kind
   ADD;
   SUB;
   MUL;
@@ -101,7 +101,8 @@ TensorPath :: struct {
 
 TensorInfo :: struct {
   suffix: string;
-  t_id: s64;
+  dag_id: s64;
+  t_id:   s64;
 }
 
 #import "Hash_Table";
@@ -117,7 +118,7 @@ collect_tensors :: (E: Type, tensors: *TensorTable, suffix := "") #compile_time 
       for tis.specified_parameters if it.name == "Loc" {
         loc := (cast(*string) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
         if !table_contains(tensors, loc)
-          table_add(tensors, loc, .{ptr(suffix), 0});
+          table_add(tensors, loc, .{ptr(suffix), 0, 0});
         return;
       }
 
@@ -212,30 +213,6 @@ get_dtype :: (S: Type) -> Type #compile_time {
   }
   return S;
 }
-
-// lhs :: (S: Type) -> Type #compile_time {
-//   ti := cast(*Type_Info) S;
-//   assert(ti.type == .STRUCT);
-//   tis := cast(*Type_Info_Struct) ti;
-//   assert(tis.name == "Op2");
-//   for tis.specified_parameters {
-//     if it.name != "L" continue;
-//     return (cast(*Type) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
-//   }
-//   panic("unreachable"); 
-// }
-// 
-// rhs :: (S: Type) -> Type #compile_time {
-//   ti := cast(*Type_Info) S;
-//   assert(ti.type == .STRUCT);
-//   tis := cast(*Type_Info_Struct) ti;
-//   assert(tis.name == "Op2");
-//   for tis.specified_parameters {
-//     if it.name != "R" continue;
-//     return (cast(*Type) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
-//   }
-//   panic("unreachable");
-// }
 
 loc :: (S: Type) -> string #compile_time {
   ti := cast(*Type_Info) S;
@@ -397,6 +374,13 @@ compute_simd :: inline (expr: $E, ret: *Tensor($T, $Loc)) #modify {
   i := 0;
 
   declaration, tensors :: #run collect_pointer_declarations(E);
+  root_id, nodes :: #run build_dag(E);
+  schedueled     :: #run schedule_dag(nodes);
+  #run { 
+    for nodes println("%: %", it_index, it); 
+    dbg(schedueled);
+  };
+
   #insert declaration;
   #run println("#########\n%", declaration);
   #insert #run read_entire_file("simd.jai");
@@ -451,3 +435,5 @@ eval_it :: inline (expr: Op2($K, $T, $L, $R, $Cost), i: s64) -> T {
     case .POW; return pow(l, r);
   }
 }
+
+#load "dag.jai";
