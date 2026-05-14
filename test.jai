@@ -25,10 +25,22 @@ count :: inline (shape: []s64) -> s64 {
 
 to_string :: (using loc: Source_Code_Location) -> string { return sprint("%:%:%", fully_pathed_filename, line_number, character_number); }
 
-compute_tensor_type :: (E: Type, loc := #caller_location) -> Type #compile_time {
+// @TODO: i dont really need 4 types of these...
+compute_tensor_type :: (E: Type, loc := #caller_location) -> Type {
   dtype := get_dtype(E);
   shape := get_shape(E);
   return compute_tensor_type(shape, dtype, loc);
+}
+
+compute_tensor_type :: (E: Type, loc : string) -> Type {
+  dtype := get_dtype(E);
+  shape := get_shape(E);
+  return compute_tensor_type(shape, dtype, loc);
+}
+
+compute_tensor_type :: (shape: []s64, dtype: Type, loc: string) -> Type #compile_time {
+  stride := compute_strides(shape);
+  return #dynamic_specialize Tensor(dtype = dtype, shape = shape, stride = stride, loc = loc);
 }
 
 compute_tensor_type :: (shape: []s64, dtype: Type, loc := #caller_location) -> Type #compile_time {
@@ -101,11 +113,12 @@ tensor_print :: (ts: RawTensor($dtype, $shape, $stride)) {
   print("\n");
 }
 
-OpKind :: enum {
+OpKind :: enum s32 {
   ADD;
   SUB;
   MUL;
   DIV;
+  POW;
 }
 
 op_kind_symbol :: (kind: OpKind) -> string {
@@ -114,6 +127,17 @@ op_kind_symbol :: (kind: OpKind) -> string {
     case .SUB; return "-";
     case .MUL; return "*";
     case .DIV; return "/";
+    case .POW; return "pow";
+    case; panic("No symbol for %", kind); return "";
+  }
+}
+
+op_format :: (kind: OpKind, lhs: string, rhs: string) -> string {
+  if kind == {
+    case .ADD; #through; case .SUB; #through; case .MUL; #through; case .DIV; 
+      return tprint("% % %", lhs, op_kind_symbol(kind), rhs);
+    case .POW;
+      return tprint("%(%, %)", op_kind_symbol(kind), lhs, rhs);
     case; panic("No symbol for %", kind); return "";
   }
 }
@@ -129,14 +153,14 @@ OpBroadcast :: struct(kind: OpKind,
   ndim :: shape.count;
 }
 
-is_tensor :: (node_type: Type) -> bool #compile_time {
+is_tensor :: (node_type: Type) -> bool {
   ti := cast(*Type_Info) node_type;
   if ti.type != .STRUCT return false;
   tis := cast(*Type_Info_Struct) ti;
   return tis.name == "Tensor";
 }
 
-is_op_broadcast :: (node_type: Type) -> bool #compile_time {
+is_op_broadcast :: (node_type: Type) -> bool {
   ti := cast(*Type_Info) node_type;
   if ti.type != .STRUCT return false;
   tis := cast(*Type_Info_Struct) ti;
@@ -144,7 +168,7 @@ is_op_broadcast :: (node_type: Type) -> bool #compile_time {
 }
 
 // @TODO: consider a get_property thing insetad of all of these, they are a bit redundant
-get_loc :: (node_type: Type) -> string #compile_time {
+get_loc :: (node_type: Type) -> string {
   ti := cast(*Type_Info) node_type;
   if ti.type != .STRUCT return "";
   tis := cast(*Type_Info_Struct) ti;
@@ -154,7 +178,7 @@ get_loc :: (node_type: Type) -> string #compile_time {
   return "";
 }
 
-get_dtype :: (node_type: Type) -> Type #compile_time {
+get_dtype :: (node_type: Type) -> Type {
   ti := cast(*Type_Info) node_type;
   if ti.type != .STRUCT return node_type;
   tis := cast(*Type_Info_Struct) ti;
@@ -169,7 +193,17 @@ get_dtype :: (node_type: Type) -> Type #compile_time {
   return node_type;
 }
 
-get_ltype :: (node_type: Type) -> Type #compile_time {
+get_kind :: (node_type: Type) -> OpKind {
+  ti := cast(*Type_Info) node_type;
+  if ti.type != .STRUCT { panic("unreachable"); return xx 0; }
+  tis := cast(*Type_Info_Struct) ti;
+  if tis.name == "OpBroadcast"
+    for tis.specified_parameters if it.name == "kind"
+      return (cast(*OpKind) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
+  panic("unreachable"); return xx 0;
+}
+
+get_ltype :: (node_type: Type) -> Type {
   ti := cast(*Type_Info) node_type;
   if ti.type != .STRUCT { panic("unreachable"); return node_type; }
   tis := cast(*Type_Info_Struct) ti;
@@ -179,7 +213,7 @@ get_ltype :: (node_type: Type) -> Type #compile_time {
   panic("unreachable"); return node_type;
 }
 
-get_rtype :: (node_type: Type) -> Type #compile_time {
+get_rtype :: (node_type: Type) -> Type {
   ti := cast(*Type_Info) node_type;
   if ti.type != .STRUCT { panic("unreachable"); return node_type; }
   tis := cast(*Type_Info_Struct) ti;
@@ -189,7 +223,7 @@ get_rtype :: (node_type: Type) -> Type #compile_time {
   panic("unreachable"); return node_type;
 }
 
-get_axes :: (node_type: Type) -> [][2] s64 #compile_time {
+get_axes :: (node_type: Type) -> [][2] s64 {
   ti := cast(*Type_Info) node_type;
   if ti.type != .STRUCT { panic("unreachable"); return .[]; }
   tis := cast(*Type_Info_Struct) ti;
@@ -213,7 +247,8 @@ get_axes :: (node_type: Type) -> [][2] s64 #compile_time {
 }
 
 
-get_shape :: (node_type: Type) -> [] s64 #compile_time {
+get_shape :: (value: $T) -> [] s64 { return get_shape(T); }
+get_shape :: (node_type: Type) -> [] s64 {
   ti := cast(*Type_Info) node_type;
   if ti.type != .STRUCT return .[1];
   tis := cast(*Type_Info_Struct) ti;
@@ -237,7 +272,7 @@ get_shape :: (node_type: Type) -> [] s64 #compile_time {
   return .[1];
 }
 
-get_stride :: (node_type: Type) -> [] s64 #compile_time {
+get_stride :: (node_type: Type) -> [] s64 {
   ti := cast(*Type_Info) node_type;
   if ti.type != .STRUCT return .[1];
   tis := cast(*Type_Info_Struct) ti;
@@ -296,22 +331,24 @@ OP2 :: #string,\% JAI
 JAI
 
 using struct {
+  #import "Math";
   #insert #run tprint(OP2, "operator +", "ADD");
   #insert #run tprint(OP2, "operator -", "SUB");
   #insert #run tprint(OP2, "operator *", "MUL");
   #insert #run tprint(OP2, "operator /", "DIV");
+  #insert #run tprint(OP2, "pow", "POW");
 }
 
 compute :: inline (expr: $E, $simd := false, $loc := #caller_location, allocator := context.allocator) 
   -> $RET #modify { RET = compute_tensor_type(E, loc); return true; } 
 {
   ret := tensor(RET.shape, RET.dtype, loc, allocator);
-  compute(expr, *ret, simd, loc);
+  compute(expr, *ret, simd);
   return ret;
 }
 
-compute :: (expr: $E, ret: *$RET, $simd := false, $loc := #caller_location) 
-  #modify { RET = compute_tensor_type(E, loc); return true; } 
+compute :: (expr: $E, ret: *$RET, $simd := false) 
+  #modify { return RET == compute_tensor_type(E, get_loc(RET)); } 
 {
   #if #run is_tensor(E) { // Tensor(dtype, shape, stride, loc)
     for *ret.data it.* = expr.data[it_index];
@@ -346,6 +383,12 @@ Path :: struct {
     append(*sb, ".ptr");
     return builder_to_string(*sb);
   }
+
+  to_string :: (path: [] u8) -> string {
+    sb: String_Builder;      
+    for path  print_to_builder(*sb, "%", it);
+    return builder_to_string(*sb);
+  }
 }
 
 
@@ -357,6 +400,7 @@ Expression_Info :: struct {
   Broadcast_TensorId   :: struct { bs: []s64; tid: TensorId; }
   Index_TensorId       :: struct { idx: s64; tid: TensorId; }
   Suffix_TensorBinding :: struct { suf: string; tb: s64; }
+  Path_to_Bs_Tid :: Table([]u8, Broadcast_TensorId, given_compare_function = array_eq);
 }
 
 path_to_tb_idx :: (e_info: *Expression_Info, path: [] u8) -> (tb: s64, idx: s64) {
@@ -368,7 +412,7 @@ path_to_tb_idx :: (e_info: *Expression_Info, path: [] u8) -> (tb: s64, idx: s64)
 
 collect_expression_info :: (E: Type) -> Expression_Info {
   e_info: Expression_Info;
-  collect_path_to_bs_tid(E, *e_info);
+  collect_path_to_bs_tid(E, *e_info.path_to_bs_tid);
 
   for bs_tid, path: e_info.path_to_bs_tid {
     if !table_contains(*e_info.bs_to_idx, bs_tid.bs)
@@ -382,7 +426,7 @@ collect_expression_info :: (E: Type) -> Expression_Info {
   return e_info;
 }
 
-collect_path_to_bs_tid :: (E: Type, e_info: *Expression_Info, path: []u8 = .[]) {
+collect_path_to_bs_tid :: (E: Type, path_to_bs_tid: *Expression_Info.Path_to_Bs_Tid , path: []u8 = .[]) {
   ti := cast(*Type_Info) E;
   if ti.type != .STRUCT return;
   tis := cast(*Type_Info_Struct) ti;
@@ -390,7 +434,7 @@ collect_path_to_bs_tid :: (E: Type, e_info: *Expression_Info, path: []u8 = .[]) 
     case "Tensor";
       stride := get_stride(E);
       tid    := get_loc(E);
-      table_add(*e_info.path_to_bs_tid, path, .{stride, tid});
+      table_add(path_to_bs_tid, path, .{stride, tid});
     case "OpBroadcast"; using Path;
       ltype := get_ltype(E);
       rtype := get_rtype(E);
@@ -398,8 +442,10 @@ collect_path_to_bs_tid :: (E: Type, e_info: *Expression_Info, path: []u8 = .[]) 
       ndim := shape.count;
       axes := get_axes(E);
 
-      collect_path_to_bs_tid(ltype, e_info, lhs(path));
-      collect_path_to_bs_tid(rtype, e_info, rhs(path));
+      l_table: Expression_Info.Path_to_Bs_Tid; defer deinit(*l_table);
+      r_table: Expression_Info.Path_to_Bs_Tid; defer deinit(*r_table);
+      collect_path_to_bs_tid(ltype, *l_table, lhs(path));
+      collect_path_to_bs_tid(rtype, *r_table, rhs(path));
 
       transform :: (child_stride: []s64, side: s64, axes: [][2]s64, ndim: s64) -> []s64 {
         bs := NewArray(ndim, s64);
@@ -410,16 +456,45 @@ collect_path_to_bs_tid :: (E: Type, e_info: *Expression_Info, path: []u8 = .[]) 
         return bs;
       }
 
-      for *bs_tid, child_path: e_info.path_to_bs_tid
-        bs_tid.*.bs = transform(bs_tid.bs, child_path[path.count], axes, ndim);
+      for *bs_tid, child_path: l_table
+        table_add(path_to_bs_tid, child_path, .{transform(bs_tid.bs, 0, axes, ndim), bs_tid.tid});
+
+      for *bs_tid, child_path: r_table
+        table_add(path_to_bs_tid, child_path, .{transform(bs_tid.bs, 1, axes, ndim), bs_tid.tid});
   }
+}
+
+generate_compute_string :: (E: Type, e_info: *Expression_Info, path: []u8 = .[]) -> (before: string, binding: string) {
+  ti := cast(*Type_Info) E;
+  if ti.type != .STRUCT { todo("not implemented"); return "", ""; }
+  tis := cast(*Type_Info_Struct) ti;
+  if tis.name == {
+    case "Tensor";
+      tb, idx := path_to_tb_idx(e_info, path);
+      return "", tprint("t%[idx%]", tb, idx);
+    case "OpBroadcast";
+      kind := get_kind(E);
+      l_before, lhs := generate_compute_string(get_ltype(E), e_info, Path.lhs(path));
+      r_before, rhs := generate_compute_string(get_rtype(E), e_info, Path.rhs(path));
+      operation := op_format(kind, lhs, rhs); 
+
+      if !path.count  return tprint("%%", l_before, r_before), operation;
+
+
+      binding := tprint("inter_%", Path.to_string(path));
+      before  := tprint("%%% := %;\n", l_before, r_before, binding, operation);
+      return before, binding;
+  }
+  todo("not implemented"); return "", "";
 }
 
 insert_broadcast_code :: (expr: OpBroadcast($kind, $dtype, $ltype, $rtype, $shape, $axes), ret: *$RET)
 {
-  #run println("%\n", type_of(expr));
-  e_info :: #run collect_expression_info(type_of(expr));
-  #run {
+
+  code :: #run -> string {
+    println("%\n", type_of(expr));
+
+    e_info := collect_expression_info(type_of(expr));
     for e_info.path_to_bs_tid
       println("%: %", it_index, it);
     println("");
@@ -429,13 +504,9 @@ insert_broadcast_code :: (expr: OpBroadcast($kind, $dtype, $ltype, $rtype, $shap
     for e_info.tid_to_suf_tb
       println("%: %", it_index, it);
     println("");
-  };
 
-  code :: #run -> string {
     ndim := expr.ndim;
-
     sb: String_Builder;
-
     for suf_tb, idx_tid: e_info.tid_to_suf_tb
       print_to_builder(*sb, "t% := expr%;\n", suf_tb.tb, suf_tb.suf);
 
@@ -453,9 +524,10 @@ insert_broadcast_code :: (expr: OpBroadcast($kind, $dtype, $ltype, $rtype, $shap
       print_to_builder(*sb, ";\n");
     }
 
-    // print_to_builder(*sb, "ret.data[out_idx] = lhs.data[l_off] % rhs.data[r_off];\n", op_kind_symbol(kind));
-    print_to_builder(*sb, "out_idx += 1;\n");
+    before, binding := generate_compute_string(type_of(expr), *e_info);
+    print_to_builder(*sb, "%ret.data[out_idx] = %;\n", before, binding);
 
+    print_to_builder(*sb, "out_idx += 1;\n");
     for dim: 0..ndim - 1 if shape[dim] > 1  print_to_builder(*sb, "}\n");
 
     code := builder_to_string(*sb);
@@ -463,19 +535,29 @@ insert_broadcast_code :: (expr: OpBroadcast($kind, $dtype, $ltype, $rtype, $shap
     return code;
   }
 
-  // #insert code;
+  #insert code;
 }
 
 main :: () {
-  N :: 10;
-  t1 := range(.[N, 1]);   defer free(t1.ref);
-  t2 := range(.[N, N, N]); defer free(t1.ref);
-  t3 := range(.[1, N]);   defer free(t1.ref);
-  ret := compute((t1 + t2) * t1 + t3); defer free(ret.ref);
-  // tensor_print(ret);
+  N :: 1024;
+  a := range(.[N, N], f32); defer free(a.ref);
+  b := ones( .[N, N], f32); defer free(b.ref);
+  c := ones( .[N, N], f32); defer free(c.ref);
+  expr := (a*(c + b) + a*b) * (a/b + b*c);
+  ret := tensor(#run get_shape(type_of(expr))); defer free(ret.ref);
+  benchmark_function(compute(expr, *ret));
 }
 
 #import "Basic";
 #import "Hash_Table";
-Hash ::  #import "Hash";
+Hash :: #import "Hash";
 #load "util.jai";
+
+benchmark_function :: (fn: Code, iterations := 1000) #expand {
+  fn_name :: #run center_pad(print_code(fn), 80, #char "-");
+  start := current_time_monotonic();
+  for 1..iterations #insert fn;
+  dt := to_float64_seconds(current_time_monotonic() - start);
+  res := tprint("% it/s (%ms elapsed)", iterations / dt, formatInt(cast (s64) (dt * 1000), digits_per_comma=3, comma_string = ","));
+  println("+%+\n|%|\n+%+", fn_name, center_pad(res, 80), center_pad("", 80, #char "-"));
+}
