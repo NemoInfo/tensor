@@ -25,31 +25,14 @@ count :: inline (shape: []s64) -> s64 {
 
 to_string :: (using loc: Source_Code_Location) -> string { return sprint("%:%:%", fully_pathed_filename, line_number, character_number); }
 
-// @TODO: i dont really need 4 types of these...
-compute_tensor_type :: (E: Type, loc := #caller_location) -> Type {
-  dtype := get_dtype(E);
-  shape := get_shape(E);
-  return compute_tensor_type(shape, dtype, loc);
-}
-
-compute_tensor_type :: (E: Type, loc : string) -> Type {
-  dtype := get_dtype(E);
-  shape := get_shape(E);
-  return compute_tensor_type(shape, dtype, loc);
-}
-
+compute_tensor_type :: (E: Type, loc : string) -> Type { return compute_tensor_type(get_shape(E), get_dtype(E), loc); }
 compute_tensor_type :: (shape: []s64, dtype: Type, loc: string) -> Type #compile_time {
   stride := compute_strides(shape);
   return #dynamic_specialize Tensor(dtype = dtype, shape = shape, stride = stride, loc = loc);
 }
 
-compute_tensor_type :: (shape: []s64, dtype: Type, loc := #caller_location) -> Type #compile_time {
-  stride := compute_strides(shape);
-  return #dynamic_specialize Tensor(dtype = dtype, shape = shape, stride = stride, loc = to_string(loc));
-}
-
 tensor :: ($shape: []s64, $dtype: Type = f32, $loc := #caller_location, allocator := context.allocator) -> $RET 
-  #modify { RET = compute_tensor_type(shape, dtype, loc); return true; }
+  #modify { RET = compute_tensor_type(shape, dtype, to_string(loc)); return true; }
 {
   res := New(RawTensor(RET.dtype, RET.shape, RET.stride),, allocator);
   res.data = NewArray(count(shape), dtype);
@@ -59,7 +42,7 @@ tensor :: ($shape: []s64, $dtype: Type = f32, $loc := #caller_location, allocato
 zeros :: tensor;
 
 element :: ($shape: []s64, el: $dtype, $loc := #caller_location, allocator := context.allocator) -> $RET 
-  #modify { RET = compute_tensor_type(shape, dtype, loc); return true; }
+  #modify { RET = compute_tensor_type(shape, dtype, to_string(loc)); return true; }
 {
   res := tensor(shape, dtype, loc, allocator);
   for *res.data  it.* = el;
@@ -67,11 +50,11 @@ element :: ($shape: []s64, el: $dtype, $loc := #caller_location, allocator := co
 }
 
 ones :: ($shape: []s64, $dtype: Type = f32, $loc := #caller_location, allocator := context.allocator) -> $RET 
-  #modify { RET = compute_tensor_type(shape, dtype, loc); return true; }
+  #modify { RET = compute_tensor_type(shape, dtype, to_string(loc)); return true; }
 { return element(shape, cast(dtype) 1, loc); }
 
 range :: ($shape: []s64, $dtype: Type = f32, $loc := #caller_location, allocator := context.allocator) -> $RET 
-  #modify { RET = compute_tensor_type(shape, dtype, loc); return true; } 
+  #modify { RET = compute_tensor_type(shape, dtype, to_string(loc)); return true; } 
 {
   res := tensor(shape, dtype, loc, allocator);
   res.data = NewArray(count(shape), dtype);
@@ -167,16 +150,20 @@ is_op_broadcast :: (node_type: Type) -> bool {
   return tis.name == "OpBroadcast";
 }
 
-// @TODO: consider a get_property thing insetad of all of these, they are a bit redundant
-get_loc :: (node_type: Type) -> string {
-  ti := cast(*Type_Info) node_type;
-  if ti.type != .STRUCT return "";
+get_struct_param :: (T: Type, $name: string, $type: Type) -> type {
+  uninit : type = ---;
+  ti := cast(*Type_Info) T;
+  if ti.type != .STRUCT { panic("not a struct"); return uninit; }
   tis := cast(*Type_Info_Struct) ti;
-  if tis.name != "Tensor" return "";
-  for tis.specified_parameters if it.name == "loc"
-    return (.*) cast(*string) (tis.constant_storage.data + it.offset_into_constant_storage);
-  return "";
+  for tis.specified_parameters if it.name == name
+    return (.*) cast(*type) (tis.constant_storage.data + it.offset_into_constant_storage);
+  panic("field % not found", name); return uninit;
 }
+
+get_loc   :: (T: Type) -> string { return get_struct_param(T, "loc", string); }
+get_ltype :: (T: Type) -> Type   { return get_struct_param(T, "ltype", Type); }
+get_rtype :: (T: Type) -> Type   { return get_struct_param(T, "rtype", Type); }
+get_kind  :: (T: Type) -> OpKind { return get_struct_param(T, "kind", OpKind); }
 
 get_dtype :: (node_type: Type) -> Type {
   ti := cast(*Type_Info) node_type;
@@ -193,108 +180,34 @@ get_dtype :: (node_type: Type) -> Type {
   return node_type;
 }
 
-get_kind :: (node_type: Type) -> OpKind {
-  ti := cast(*Type_Info) node_type;
-  if ti.type != .STRUCT { panic("unreachable"); return xx 0; }
-  tis := cast(*Type_Info_Struct) ti;
-  if tis.name == "OpBroadcast"
-    for tis.specified_parameters if it.name == "kind"
-      return (cast(*OpKind) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
-  panic("unreachable"); return xx 0;
-}
-
-get_ltype :: (node_type: Type) -> Type {
-  ti := cast(*Type_Info) node_type;
-  if ti.type != .STRUCT { panic("unreachable"); return node_type; }
-  tis := cast(*Type_Info_Struct) ti;
-  if tis.name == "OpBroadcast"
-    for tis.specified_parameters if it.name == "ltype"
-      return (cast(*Type) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
-  panic("unreachable"); return node_type;
-}
-
-get_rtype :: (node_type: Type) -> Type {
-  ti := cast(*Type_Info) node_type;
-  if ti.type != .STRUCT { panic("unreachable"); return node_type; }
-  tis := cast(*Type_Info_Struct) ti;
-  if tis.name == "OpBroadcast"
-    for tis.specified_parameters if it.name == "rtype"
-      return (cast(*Type) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
-  panic("unreachable"); return node_type;
-}
-
-get_axes :: (node_type: Type) -> [][2] s64 {
-  ti := cast(*Type_Info) node_type;
-  if ti.type != .STRUCT { panic("unreachable"); return .[]; }
-  tis := cast(*Type_Info_Struct) ti;
-  if tis.name == {
-    case "OpBroadcast";
-    for tis.specified_parameters {
-      if it.name != "axes" continue;
-      tia := cast(*Type_Info_Array) it.type;
-      res: [][2] s64;
-      if tia.array_type == .FIXED {
-        res.count = tia.array_count;
-        res.data  = cast(*[2]s64) (tis.constant_storage.data + it.offset_into_constant_storage);
-      } else {
-        res.count = (.*) cast(*s64)  (tis.constant_storage.data + it.offset_into_constant_storage);
-        res.data  = (.*) cast(**[2]s64) (tis.constant_storage.data + it.offset_into_constant_storage + 8);
-      }
-      return res;
-    }
+get_struct_array_param :: (T: Type, name: string, $type: Type, default: [] type = .[], throw := false) -> [] type {
+  ti := cast(*Type_Info) T;
+  if ti.type != .STRUCT {
+    if throw  panic("Expected .STRUCT but found %", ti.type);
+    return default;
   }
-  panic("unreachable"); return .[];
-}
-
-
-get_shape :: (value: $T) -> [] s64 { return get_shape(T); }
-get_shape :: (node_type: Type) -> [] s64 {
-  ti := cast(*Type_Info) node_type;
-  if ti.type != .STRUCT return .[1];
   tis := cast(*Type_Info_Struct) ti;
-  if tis.name == {
-    case "Tensor"; #through;
-    case "OpBroadcast";
-    for tis.specified_parameters {
-      if it.name != "shape" continue;
-      tia := cast(*Type_Info_Array) it.type;
-      res: [] s64;
-      if tia.array_type == .FIXED {
-        res.count = tia.array_count;
-        res.data  = cast(*s64) (tis.constant_storage.data + it.offset_into_constant_storage);
-      } else {
-        res.count = (.*) cast(*s64)  (tis.constant_storage.data + it.offset_into_constant_storage);
-        res.data  = (.*) cast(**s64) (tis.constant_storage.data + it.offset_into_constant_storage + 8);
-      }
-      return res;
+  for tis.specified_parameters {
+    if it.name != name continue;
+    tia := cast(*Type_Info_Array) it.type;
+    res: [] type;
+    if tia.array_type == .FIXED {
+      res.count = tia.array_count;
+      res.data  = cast(*type) (tis.constant_storage.data + it.offset_into_constant_storage);
+    } else {
+      res.count = (.*) cast(*s64)  (tis.constant_storage.data + it.offset_into_constant_storage);
+      res.data  = (.*) cast(**type) (tis.constant_storage.data + it.offset_into_constant_storage + 8);
     }
+    return res;
   }
-  return .[1];
+  if throw  panic("Could not find parameter named % on type %", name, T);
+  return default;
 }
 
-get_stride :: (node_type: Type) -> [] s64 {
-  ti := cast(*Type_Info) node_type;
-  if ti.type != .STRUCT return .[1];
-  tis := cast(*Type_Info_Struct) ti;
-  if tis.name == {
-    case "Tensor"; #through;
-    case "OpBroadcast";
-    for tis.specified_parameters {
-      if it.name != "stride" continue;
-      tia := cast(*Type_Info_Array) it.type;
-      res: [] s64;
-      if tia.array_type == .FIXED {
-        res.count = tia.array_count;
-        res.data  = cast(*s64) (tis.constant_storage.data + it.offset_into_constant_storage);
-      } else {
-        res.count = (.*) cast(*s64)  (tis.constant_storage.data + it.offset_into_constant_storage);
-        res.data  = (.*) cast(**s64) (tis.constant_storage.data + it.offset_into_constant_storage + 8);
-      }
-      return res;
-    }
-  }
-  return .[1];
-}
+get_axes   :: (T: Type) -> [][2] s64 { return get_struct_array_param(T, "axes", [2]s64, throw = true); }
+get_stride :: (T: Type) -> [] s64    { return get_struct_array_param(T, "stride", s64, .[1]); }
+get_shape  :: (T: Type) -> [] s64    { return get_struct_array_param(T, "shape", s64, .[1]); }
+get_shape  :: (val: $T) -> [] s64    { return get_shape(T); }
 
 broadcast_shapes :: (l_shape: [] s64, r_shape: [] s64) -> (success: bool, out_shape: [] s64, axes: [][2] s64) {
   ndim_out := max(l_shape.count, r_shape.count);
@@ -340,7 +253,7 @@ using struct {
 }
 
 compute :: inline (expr: $E, $simd := false, $loc := #caller_location, allocator := context.allocator) 
-  -> $RET #modify { RET = compute_tensor_type(E, loc); return true; } 
+  -> $RET #modify { RET = compute_tensor_type(E, to_string(loc)); return true; } 
 {
   ret := tensor(RET.shape, RET.dtype, loc, allocator);
   compute(expr, *ret, simd);
@@ -386,7 +299,7 @@ Path :: struct {
 
   to_string :: (path: [] u8) -> string {
     sb: String_Builder;      
-    for path  print_to_builder(*sb, "%", it);
+    for path  print_to_builder(*sb, "%", string.["l", "r"][it]);
     return builder_to_string(*sb);
   }
 }
@@ -479,7 +392,6 @@ generate_compute_string :: (E: Type, e_info: *Expression_Info, path: []u8 = .[])
       operation := op_format(kind, lhs, rhs); 
 
       if !path.count  return tprint("%%", l_before, r_before), operation;
-
 
       binding := tprint("inter_%", Path.to_string(path));
       before  := tprint("%%% := %;\n", l_before, r_before, binding, operation);
