@@ -94,14 +94,8 @@ rhs :: (path: [] u8) -> [] u8 {
   return new_path;
 }
 
-TensorPath :: struct {
-  suffix: string;
-  index:  [] u8;
-}
-
 TensorInfo :: struct {
   suffix: string;
-  dag_id: s64;
   t_id:   s64;
 }
 
@@ -117,8 +111,7 @@ collect_tensors :: (E: Type, tensors: *TensorTable, suffix := "") #compile_time 
     case "Tensor"; 
       for tis.specified_parameters if it.name == "Loc" {
         loc := (cast(*string) (tis.constant_storage.data + it.offset_into_constant_storage)).*;
-        if !table_contains(tensors, loc)
-          table_add(tensors, loc, .{ptr(suffix), 0, 0});
+        if !table_contains(tensors, loc) table_add(tensors, loc, .{ptr(suffix), 0});
         return;
       }
 
@@ -334,7 +327,7 @@ compute :: inline (expr: $E, ret: *Tensor($T, $Loc)) #modify {
   assert(shape_eq(shape, ret.shape));
 
   if is_broadcasting(expr, shape) {
-    nd_index := NewArray(ret.ndim, s64,, temp);
+    nd_index := NewArray(ret.ndim, s64); defer array_free(nd_index);
     for 0..ret.count - 1 {
       tmp := it;
       for < 0..ret.ndim - 1 {
@@ -364,27 +357,13 @@ compute_simd :: inline (expr: $E, ret: *Tensor($T, $Loc)) #modify {
   T = get_dtype(E);
   return true;
 } {
-  #import "File";
-
-  MAX_COST  :: #run get_cost(E);
-  REG_COUNT :: #run min(MAX_COST + 1, 16);
-
   simd_n := ret.count & ~(cast(s64) 7);
   ret_ptr := ret.ptr;
   i := 0;
 
-  declaration, tensors :: #run collect_pointer_declarations(E);
-  root_id, nodes :: #run build_dag(E);
-  schedueled     :: #run schedule_dag(nodes);
-  #run { 
-    for nodes println("%: %", it_index, it); 
-    dbg(schedueled);
-  };
+  loop_body, pre_decl, root_reg :: #run generate_simd_code(E);
 
-  #insert declaration;
-  #run println("#########\n%", declaration);
-  #insert #run read_entire_file("simd.jai");
-
+  #insert pre_decl;
   #asm AVX {
     ymm0:  vec === 0;  ymm1:  vec === 1;  ymm2:  vec === 2;  ymm3:  vec === 3;
     ymm4:  vec === 4;  ymm5:  vec === 5;  ymm6:  vec === 6;  ymm7:  vec === 7;
@@ -392,13 +371,10 @@ compute_simd :: inline (expr: $E, ret: *Tensor($T, $Loc)) #modify {
     ymm12: vec === 12; ymm13: vec === 13; ymm14: vec === 14; ymm15: vec === 15;
     ptr: gpr === 10;
   }
-  #if REG_COUNT > 16 {
-    panic("spill not implemented");
-  }
 
   for 0..simd_n / 8 - 1 {
-    eval_it_simd(*expr, 0);
-    #asm AVX { movups.y [ret_ptr + i], ymm0; }
+    #insert loop_body;
+    #insert #run tprint("#asm AVX { movups.y [ret_ptr + i], ymm%; }", root_reg);
     i += size_of(T) * 8;
   } 
 
@@ -437,3 +413,4 @@ eval_it :: inline (expr: Op2($K, $T, $L, $R, $Cost), i: s64) -> T {
 }
 
 #load "dag.jai";
+Sloppy_Math :: #import "Sloppy_Math";

@@ -1,6 +1,8 @@
 f32 :: float32;
 f64 :: float64;
 
+MAX_S64 :: #run (#import "Sloppy_Math").max_of_type(s64);
+
 transmute :: inline ($toT: Type, x: $T) -> toT {
     union { from : T = ---; to : toT = ---; }    
     from = x;
@@ -40,6 +42,14 @@ panic :: inline (s: string, args: ..Any, exit_code: s32 = 1, loc := #caller_loca
   #import "Print_Color";
   eprint("[%:%:%] ", loc.fully_pathed_filename, loc.line_number, loc.character_number);
   print_color("panicked:", color=.RED, .BOLD, to_standard_error=true);
+  eprintln(" %", tprint(s, ..args));
+  exit(exit_code);
+}
+
+todo :: inline (s: string, args: ..Any, exit_code: s32 = 1, loc := #caller_location) {
+  #import "Print_Color";
+  eprint("[%:%:%] ", loc.fully_pathed_filename, loc.line_number, loc.character_number);
+  print_color("todo:", color=.YELLOW, .BOLD, to_standard_error=true);
   eprintln(" %", tprint(s, ..args));
   exit(exit_code);
 }
