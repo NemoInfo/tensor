@@ -6,7 +6,7 @@ N = 1024
 I = 1000
 
 a = jnp.arange(N * N, dtype=jnp.float32).reshape((N, N))
-b = jnp.ones((N, N), dtype=jnp.float32)
+b = jnp.ones((N,), dtype=jnp.float32)
 c = jnp.ones((N, N), dtype=jnp.float32)
 
 @jax.jit

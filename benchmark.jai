@@ -11,7 +11,7 @@ benchmark :: () {
 
   // benchmark_function(naive(a, b, c, *ret));  
   // benchmark_function(fused(a, b, c, *ret)); // Reference for optimal asssembly for a * b + c (no simd)
-  benchmark_function(compute(expr3, *ret));
+  benchmark_function(compute(a + b, *ret));
   benchmark_function(compute_simd(expr3, *ret));
   // benchmark_function(compute_simd(expr4, *ret));
   // benchmark_function(compute_simd(expr2 - a / 2., *ret));

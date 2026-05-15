@@ -14,10 +14,11 @@ println :: inline (s: string, args: ..Any) {
   print(s, ..args); print("\n");
 }
 
-dbg :: (a: Code, loc := #caller_location) #expand {
+dbg :: (a: Code, loc := #caller_location) -> Code #expand {
     val := #insert a;
     str :: #run print_code(a); 
     print("[%:%:%] % = %\n", loc.fully_pathed_filename, loc.line_number, loc.character_number, str, val);
+    return a;
 }
 
 // @BUG: this eats parenthesis for breakfast for some reason
@@ -73,4 +74,12 @@ array_eq :: (xs: [] $T, ys: [] T) -> bool {
   if xs.count != ys.count return false;
   for 0..xs.count - 1 if xs[it] != ys[it] return false;
   return true;
+}
+
+// could maybe do a generalized version of this
+insertable_type_string :: (type: Type) -> string {
+  type_str := tprint("%", type);
+  type_str = String.replace(type_str, "[", ".[");
+  type_str = String.replace(type_str, "kind=", "kind=.");
+  return type_str;
 }
